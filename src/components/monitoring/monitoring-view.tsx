@@ -1,8 +1,9 @@
 "use client";
 
-import React, { useEffect, useState } from "react";
-import { Download, Printer } from "lucide-react";
+import React, { useEffect, useMemo, useState } from "react";
 import Link from "next/link";
+import { usePathname, useRouter, useSearchParams } from "next/navigation";
+import { Download, Printer } from "lucide-react";
 import { toast } from "sonner";
 import { buttonVariants } from "@/components/ui/button";
 import type { Unit } from "@/db/schema";
@@ -12,7 +13,9 @@ import type {
   UrgencyCounts,
   UrgencyFilter,
 } from "@/lib/employee-queries";
+import { FilterBar } from "./filter-bar";
 import { MonitoringTable } from "./monitoring-table";
+import { UrgencyTabs } from "./urgency-tabs";
 
 interface EmployeesApiResponse {
   dbConfigured: boolean;
@@ -28,26 +31,128 @@ interface EmployeesApiResponse {
   units: Unit[];
 }
 
+function normalizeUrgencyParam(raw: string | null): UrgencyFilter {
+  if (!raw) return "all";
+  const upper = raw.toUpperCase();
+  if (
+    upper === "OVERDUE" ||
+    upper === "CRITICAL" ||
+    upper === "WARNING" ||
+    upper === "UPCOMING" ||
+    upper === "TWO_TO_FIVE" ||
+    upper === "SAFE" ||
+    upper === "CRITICAL_OR_OVERDUE"
+  ) {
+    return upper as UrgencyFilter;
+  }
+  return "all";
+}
+
 export function MonitoringView() {
+  const router = useRouter();
+  const pathname = usePathname();
+  const searchParams = useSearchParams();
+
+  const [searchInput, setSearchInput] = useState(
+    () => searchParams.get("q") ?? ""
+  );
+  const [debouncedQ, setDebouncedQ] = useState(
+    () => searchParams.get("q") ?? ""
+  );
+  const [unitId, setUnitId] = useState(
+    () => searchParams.get("unitId") ?? "all"
+  );
+  const [status, setStatus] = useState(
+    () => searchParams.get("status") ?? "all"
+  );
+  const [tmtYear, setTmtYear] = useState(
+    () => searchParams.get("tmtYear") ?? "all"
+  );
+  const [processStatus, setProcessStatus] = useState(
+    () => searchParams.get("processStatus") ?? "all"
+  );
+  const [urgency, setUrgency] = useState<UrgencyFilter>(() =>
+    normalizeUrgencyParam(searchParams.get("urgency"))
+  );
+  const [sortBy, setSortBy] = useState<EmployeeSortBy>(
+    () => (searchParams.get("sortBy") as EmployeeSortBy) || "retirementDate"
+  );
+  const [sortDir, setSortDir] = useState<"asc" | "desc">(() =>
+    searchParams.get("sortDir") === "desc" ? "desc" : "asc"
+  );
+  const [page, setPage] = useState(() => {
+    const p = Number(searchParams.get("page") ?? "1");
+    return Number.isFinite(p) && p > 0 ? p : 1;
+  });
+  const [pageSize, setPageSize] = useState(() => {
+    const ps = Number(searchParams.get("pageSize") ?? "25");
+    return [15, 25, 50, 100].includes(ps) ? ps : 25;
+  });
+
   const [data, setData] = useState<EmployeesApiResponse | null>(null);
   const [loading, setLoading] = useState(true);
-  const [page, setPage] = useState(1);
-  const [pageSize, setPageSize] = useState(25);
-  const [sortBy, setSortBy] = useState<EmployeeSortBy>("retirementDate");
-  const [sortDir, setSortDir] = useState<"asc" | "desc">("asc");
-  const [urgency] = useState<UrgencyFilter>("all");
 
+  // Debounce input pencarian 300ms
+  useEffect(() => {
+    const timer = setTimeout(() => {
+      if (searchInput !== debouncedQ) {
+        setLoading(true);
+        setDebouncedQ(searchInput);
+        setPage(1);
+      }
+    }, 300);
+    return () => clearTimeout(timer);
+  }, [searchInput, debouncedQ]);
+
+  const queryString = useMemo(() => {
+    const params = new URLSearchParams();
+    if (debouncedQ.trim()) params.set("q", debouncedQ.trim());
+    if (unitId !== "all") params.set("unitId", unitId);
+    if (status !== "all") params.set("status", status);
+    if (tmtYear !== "all") params.set("tmtYear", tmtYear);
+    if (processStatus !== "all") params.set("processStatus", processStatus);
+    if (urgency !== "all") params.set("urgency", urgency);
+    if (sortBy !== "retirementDate") params.set("sortBy", sortBy);
+    if (sortDir !== "asc") params.set("sortDir", sortDir);
+    if (page > 1) params.set("page", String(page));
+    if (pageSize !== 25) params.set("pageSize", String(pageSize));
+    return params.toString();
+  }, [
+    debouncedQ,
+    unitId,
+    status,
+    tmtYear,
+    processStatus,
+    urgency,
+    sortBy,
+    sortDir,
+    page,
+    pageSize,
+  ]);
+
+  // Sinkronkan filter ke URL tanpa reload
+  useEffect(() => {
+    const targetUrl = queryString ? `${pathname}?${queryString}` : pathname;
+    router.replace(targetUrl, { scroll: false });
+  }, [pathname, queryString, router]);
+
+  // Fetch data dari API
   useEffect(() => {
     const controller = new AbortController();
-    const params = new URLSearchParams({
+    const apiParams = new URLSearchParams({
       page: String(page),
       pageSize: String(pageSize),
       sortBy,
       sortDir,
       urgency,
     });
+    if (debouncedQ.trim()) apiParams.set("q", debouncedQ.trim());
+    if (unitId !== "all") apiParams.set("unitId", unitId);
+    if (status !== "all") apiParams.set("status", status);
+    if (tmtYear !== "all") apiParams.set("tmtYear", tmtYear);
+    if (processStatus !== "all") apiParams.set("processStatus", processStatus);
 
-    fetch(`/api/employees?${params.toString()}`, {
+    fetch(`/api/employees?${apiParams.toString()}`, {
       signal: controller.signal,
     })
       .then((res) => {
@@ -69,7 +174,18 @@ export function MonitoringView() {
       });
 
     return () => controller.abort();
-  }, [page, pageSize, sortBy, sortDir, urgency]);
+  }, [
+    debouncedQ,
+    unitId,
+    status,
+    tmtYear,
+    processStatus,
+    urgency,
+    sortBy,
+    sortDir,
+    page,
+    pageSize,
+  ]);
 
   const handleSortChange = (col: EmployeeSortBy) => {
     setLoading(true);
@@ -82,11 +198,37 @@ export function MonitoringView() {
     setPage(1);
   };
 
-  const exportQuery = new URLSearchParams({
+  const hasActiveFilters =
+    Boolean(searchInput.trim()) ||
+    unitId !== "all" ||
+    status !== "all" ||
+    tmtYear !== "all" ||
+    processStatus !== "all" ||
+    urgency !== "all";
+
+  const handleResetFilters = () => {
+    setLoading(true);
+    setSearchInput("");
+    setDebouncedQ("");
+    setUnitId("all");
+    setStatus("all");
+    setTmtYear("all");
+    setProcessStatus("all");
+    setUrgency("all");
+    setPage(1);
+  };
+
+  const exportParams = new URLSearchParams({
     sortBy,
     sortDir,
     urgency,
-  }).toString();
+  });
+  if (debouncedQ.trim()) exportParams.set("q", debouncedQ.trim());
+  if (unitId !== "all") exportParams.set("unitId", unitId);
+  if (status !== "all") exportParams.set("status", status);
+  if (tmtYear !== "all") exportParams.set("tmtYear", tmtYear);
+  if (processStatus !== "all") exportParams.set("processStatus", processStatus);
+  const exportQuery = exportParams.toString();
 
   return (
     <div className="space-y-4">
@@ -121,9 +263,61 @@ export function MonitoringView() {
 
       {data && !data.dbConfigured && (
         <div className="rounded-lg border border-amber-200 bg-amber-50 px-4 py-3 text-xs text-amber-800">
-          Database PostgreSQL belum terhubung (`DATABASE_URL` belum diatur). Tabel akan menampilkan data setelah koneksi database dikonfigurasi.
+          Database PostgreSQL belum terhubung (<code>DATABASE_URL</code> belum diatur). Tabel akan menampilkan data setelah koneksi database dikonfigurasi.
         </div>
       )}
+
+      <UrgencyTabs
+        value={urgency}
+        counts={
+          data?.counts ?? {
+            allActive: 0,
+            overdue: 0,
+            critical: 0,
+            warning: 0,
+            upcoming: 0,
+            twoToFive: 0,
+          }
+        }
+        onChange={(next) => {
+          setLoading(true);
+          setUrgency(next);
+          setPage(1);
+        }}
+      />
+
+      <FilterBar
+        searchInput={searchInput}
+        onSearchInputChange={setSearchInput}
+        unitId={unitId}
+        onUnitIdChange={(val) => {
+          setLoading(true);
+          setUnitId(val);
+          setPage(1);
+        }}
+        status={status}
+        onStatusChange={(val) => {
+          setLoading(true);
+          setStatus(val);
+          setPage(1);
+        }}
+        tmtYear={tmtYear}
+        onTmtYearChange={(val) => {
+          setLoading(true);
+          setTmtYear(val);
+          setPage(1);
+        }}
+        processStatus={processStatus}
+        onProcessStatusChange={(val) => {
+          setLoading(true);
+          setProcessStatus(val);
+          setPage(1);
+        }}
+        units={data?.units ?? []}
+        availableYears={data?.availableYears ?? []}
+        hasActiveFilters={hasActiveFilters}
+        onReset={handleResetFilters}
+      />
 
       <MonitoringTable
         items={data?.items ?? []}
