@@ -6,13 +6,14 @@ import { usePathname, useRouter, useSearchParams } from "next/navigation";
 import { Download, Printer } from "lucide-react";
 import { toast } from "sonner";
 import { buttonVariants } from "@/components/ui/button";
-import type { Unit } from "@/db/schema";
+import type { AppSettings, Unit } from "@/db/schema";
 import type {
   EmployeeSortBy,
   EnrichedEmployee,
   UrgencyCounts,
   UrgencyFilter,
 } from "@/lib/employee-queries";
+import { EmployeeDrawer } from "./employee-drawer";
 import { FilterBar } from "./filter-bar";
 import { MonitoringTable } from "./monitoring-table";
 import { UrgencyTabs } from "./urgency-tabs";
@@ -29,6 +30,7 @@ interface EmployeesApiResponse {
   counts: UrgencyCounts;
   availableYears: number[];
   units: Unit[];
+  settings?: AppSettings;
 }
 
 function normalizeUrgencyParam(raw: string | null): UrgencyFilter {
@@ -91,6 +93,9 @@ export function MonitoringView() {
 
   const [data, setData] = useState<EmployeesApiResponse | null>(null);
   const [loading, setLoading] = useState(true);
+  const [selectedEmployee, setSelectedEmployee] =
+    useState<EnrichedEmployee | null>(null);
+  const [refreshTick, setRefreshTick] = useState(0);
 
   // Debounce input pencarian 300ms
   useEffect(() => {
@@ -128,6 +133,7 @@ export function MonitoringView() {
     sortDir,
     page,
     pageSize,
+    refreshTick,
   ]);
 
   // Sinkronkan filter ke URL tanpa reload
@@ -185,6 +191,7 @@ export function MonitoringView() {
     sortDir,
     page,
     pageSize,
+    refreshTick,
   ]);
 
   const handleSortChange = (col: EmployeeSortBy) => {
@@ -338,8 +345,19 @@ export function MonitoringView() {
           setPageSize(nextSize);
           setPage(1);
         }}
-        onSelectEmployee={() => {
-          // Drawer detail akan ditambahkan di tahap berikutnya
+        onSelectEmployee={(emp) => setSelectedEmployee(emp)}
+      />
+
+      <EmployeeDrawer
+        employee={selectedEmployee}
+        tmtRule={data?.settings?.tmtRule}
+        open={Boolean(selectedEmployee)}
+        onOpenChange={(open) => {
+          if (!open) setSelectedEmployee(null);
+        }}
+        onUpdated={() => {
+          setLoading(true);
+          setRefreshTick((t) => t + 1);
         }}
       />
     </div>
