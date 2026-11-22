@@ -1,6 +1,6 @@
 "use client";
 
-import React, { useMemo, useState } from "react";
+import React, { useMemo, useState, useSyncExternalStore } from "react";
 import {
   Bar,
   BarChart,
@@ -26,11 +26,17 @@ interface ProjectionChartProps {
   units: Unit[];
 }
 
+const emptySubscribe = () => () => {};
+
 export function ProjectionChart({ employees, units }: ProjectionChartProps) {
   const [unitFilter, setUnitFilter] = useState("all");
+  const currentYear = useSyncExternalStore(
+    emptySubscribe,
+    () => new Date().getFullYear(),
+    () => 2026
+  );
 
   const chartData = useMemo(() => {
-    const currentYear = new Date().getFullYear();
     const years = Array.from({ length: 10 }, (_, idx) => currentYear + idx);
 
     const filtered =
@@ -52,7 +58,7 @@ export function ProjectionChart({ employees, units }: ProjectionChartProps) {
       year: String(y),
       jumlah: countsByYear.get(y) ?? 0,
     }));
-  }, [employees, unitFilter]);
+  }, [currentYear, employees, unitFilter]);
 
   return (
     <Card className="border-slate-200 bg-white">

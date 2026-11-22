@@ -133,7 +133,6 @@ export function MonitoringView() {
     sortDir,
     page,
     pageSize,
-    refreshTick,
   ]);
 
   // Sinkronkan filter ke URL tanpa reload
@@ -144,6 +143,7 @@ export function MonitoringView() {
 
   // Fetch data dari API
   useEffect(() => {
+    void refreshTick;
     const controller = new AbortController();
     const apiParams = new URLSearchParams({
       page: String(page),

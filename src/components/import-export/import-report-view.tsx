@@ -1,6 +1,6 @@
 "use client";
 
-import React, { useState } from "react";
+import React, { useState, useSyncExternalStore } from "react";
 import Link from "next/link";
 import {
   AlertCircle,
@@ -38,34 +38,44 @@ interface PreviewApiResponse {
   };
 }
 
-const REPORT_PRESETS = [
-  {
-    title: "Daftar Pegawai Pensiun ≤ 2 Tahun Mendatang",
-    description:
-      "Menampilkan pegawai yang telah melewati BUP, kritis (≤ 6 bulan), siaga (6–12 bulan), dan persiapan (1–2 tahun).",
-    query: "urgency=UPCOMING&sortBy=retirementDate&sortDir=asc",
-    excelQuery: "sortBy=retirementDate&sortDir=asc",
-    printTitle: "DAFTAR PRIORITAS PENSIUN PEGAWAI (1–2 TAHUN MENDATANG)",
-  },
-  {
-    title: "Daftar Pegawai Pensiun Tahun Berjalan",
-    description:
-      "Daftar nominatif pegawai dengan TMT pensiun pada tahun kalender berjalan.",
-    query: `tmtYear=${new Date().getFullYear()}&sortBy=retirementDate&sortDir=asc`,
-    excelQuery: `tmtYear=${new Date().getFullYear()}&sortBy=retirementDate&sortDir=asc`,
-    printTitle: `DAFTAR NOMINATIF PEGAWAI PENSIUN TAHUN ${new Date().getFullYear()}`,
-  },
-  {
-    title: "Rekapitulasi Seluruh Pegawai Aktif Urut TMT Pensiun",
-    description:
-      "Seluruh pegawai aktif BRIDA dan UPTB diurutkan dari TMT pensiun paling cepat.",
-    query: "isActive=true&sortBy=retirementDate&sortDir=asc",
-    excelQuery: "isActive=true&sortBy=retirementDate&sortDir=asc",
-    printTitle: "REKAPITULASI MONITORING PENSIUN SELURUH PEGAWAI AKTIF",
-  },
-];
+const emptySubscribe = () => () => {};
+
+function getReportPresets(currentYear: number) {
+  return [
+    {
+      title: "Daftar Pegawai Pensiun ≤ 2 Tahun Mendatang",
+      description:
+        "Menampilkan pegawai yang telah melewati BUP, kritis (≤ 6 bulan), siaga (6–12 bulan), dan persiapan (1–2 tahun).",
+      query: "urgency=UPCOMING&sortBy=retirementDate&sortDir=asc",
+      excelQuery: "sortBy=retirementDate&sortDir=asc",
+      printTitle: "DAFTAR PRIORITAS PENSIUN PEGAWAI (1–2 TAHUN MENDATANG)",
+    },
+    {
+      title: "Daftar Pegawai Pensiun Tahun Berjalan",
+      description:
+        "Daftar nominatif pegawai dengan TMT pensiun pada tahun kalender berjalan.",
+      query: `tmtYear=${currentYear}&sortBy=retirementDate&sortDir=asc`,
+      excelQuery: `tmtYear=${currentYear}&sortBy=retirementDate&sortDir=asc`,
+      printTitle: `DAFTAR NOMINATIF PEGAWAI PENSIUN TAHUN ${currentYear}`,
+    },
+    {
+      title: "Rekapitulasi Seluruh Pegawai Aktif Urut TMT Pensiun",
+      description:
+        "Seluruh pegawai aktif BRIDA dan UPTB diurutkan dari TMT pensiun paling cepat.",
+      query: "isActive=true&sortBy=retirementDate&sortDir=asc",
+      excelQuery: "isActive=true&sortBy=retirementDate&sortDir=asc",
+      printTitle: "REKAPITULASI MONITORING PENSIUN SELURUH PEGAWAI AKTIF",
+    },
+  ];
+}
 
 export function ImportReportView() {
+  const currentYear = useSyncExternalStore(
+    emptySubscribe,
+    () => new Date().getFullYear(),
+    () => 2026
+  );
+  const REPORT_PRESETS = getReportPresets(currentYear);
   const [normalizeTitle, setNormalizeTitle] = useState(true);
   const [updateExisting, setUpdateExisting] = useState(true);
   const [parsing, setParsing] = useState(false);

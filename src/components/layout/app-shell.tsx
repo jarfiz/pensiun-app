@@ -1,6 +1,6 @@
 "use client";
 
-import React, { useState } from "react";
+import React, { useState, useSyncExternalStore } from "react";
 import Link from "next/link";
 import { usePathname } from "next/navigation";
 import { format } from "date-fns";
@@ -137,9 +137,16 @@ function SidebarContent({
   );
 }
 
+const emptySubscribe = () => () => {};
+
 export function AppShell({ children }: { children: React.ReactNode }) {
   const pathname = usePathname();
   const [mobileOpen, setMobileOpen] = useState(false);
+  const todayLabel = useSyncExternalStore(
+    emptySubscribe,
+    () => format(new Date(), "EEEE, dd MMMM yyyy", { locale: idLocale }),
+    () => ""
+  );
 
   // Halaman cetak PDF A4 tidak menggunakan sidebar/header shell
   if (pathname.startsWith("/laporan/cetak")) {
@@ -147,9 +154,6 @@ export function AppShell({ children }: { children: React.ReactNode }) {
   }
 
   const currentTitle = getBreadcrumbLabel(pathname);
-  const todayLabel = format(new Date(), "EEEE, dd MMMM yyyy", {
-    locale: idLocale,
-  });
 
   return (
     <div className="flex min-h-screen bg-slate-50">
