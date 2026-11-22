@@ -27,6 +27,16 @@ describe("nip-parser", () => {
     }
   });
 
+  it("mem-parse NIP PPPK dengan kode pengangkatan 21", () => {
+    const parsed = parseNip("198512042024211002");
+    expect(parsed.valid).toBe(true);
+    if (parsed.valid) {
+      expect(parsed.data.birthDate).toBe("1985-12-04");
+      expect(parsed.data.appointmentYm).toBe("2024-21");
+      expect(parsed.data.gender).toBe("L");
+    }
+  });
+
   it("menolak NIP yang panjangnya bukan 18 digit", () => {
     const res = parseNip("19670629199503200");
     expect(res.valid).toBe(false);

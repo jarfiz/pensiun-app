@@ -85,10 +85,14 @@ export function parseNip(raw: string): NipParseResult {
   const appYear = Number(appYearStr);
   const appMonth = Number(appMonthStr);
 
-  if (appYear < 1950 || appYear > 2100 || appMonth < 1 || appMonth > 12) {
+  // PNS menggunakan bulan 01-12, sedangkan PPPK menggunakan kode pengangkatan seperti 21
+  const isValidAppCode =
+    (appMonth >= 1 && appMonth <= 12) || (appMonth >= 21 && appMonth <= 29);
+
+  if (appYear < 1950 || appYear > 2100 || !isValidAppCode) {
     return {
       valid: false,
-      error: `Tahun/bulan pengangkatan pada digit 9–14 NIP (${appYearStr}-${appMonthStr}) tidak valid.`,
+      error: `Tahun/kode pengangkatan pada digit 9–14 NIP (${appYearStr}-${appMonthStr}) tidak valid.`,
       sanitized,
     };
   }
