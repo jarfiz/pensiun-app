@@ -35,6 +35,12 @@ export async function GET(request: NextRequest) {
     const unitId =
       unitIdParam && unitIdParam !== "all" ? Number(unitIdParam) : null;
     const statusParam = sp.get("status") ?? "all";
+    const rankGradeParam = sp.get("rankGrade") ?? "all";
+    const birthYearParam = sp.get("birthYear");
+    const birthYear =
+      birthYearParam && birthYearParam !== "all"
+        ? Number(birthYearParam)
+        : null;
     const urgencyParam = (sp.get("urgency") ?? "all") as UrgencyFilter;
     const tmtYearParam = sp.get("tmtYear");
     const tmtYear =
@@ -56,6 +62,8 @@ export async function GET(request: NextRequest) {
       q,
       unitId: Number.isFinite(unitId) ? unitId : null,
       status: statusParam as "PNS" | "PPPK_FULL" | "PPPK_PART" | "all",
+      rankGrade: rankGradeParam,
+      birthYear: Number.isFinite(birthYear) ? birthYear : null,
       urgency: urgencyParam,
       tmtYear: Number.isFinite(tmtYear) ? tmtYear : null,
       processStatus: processStatusParam as

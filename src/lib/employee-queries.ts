@@ -34,6 +34,8 @@ export interface EmployeeQueryParams {
   q?: string;
   unitId?: number | null;
   status?: EmploymentStatus | "all";
+  rankGrade?: string | "all";
+  birthYear?: number | null;
   urgency?: UrgencyFilter;
   tmtYear?: number | null;
   processStatus?: RetirementProcessStatus | "all";
@@ -141,6 +143,8 @@ export async function queryEmployees(params: EmployeeQueryParams = {}) {
         twoToFive: 0,
       } satisfies UrgencyCounts,
       availableYears: [] as number[],
+      availableBirthYears: [] as number[],
+      availableRankGrades: [] as string[],
       units: [] as Unit[],
       settings: { ...DEFAULT_APP_SETTINGS, updatedAt: new Date() },
     };
@@ -164,6 +168,19 @@ export async function queryEmployees(params: EmployeeQueryParams = {}) {
 
   if (params.status && params.status !== "all") {
     conditions.push(eq(employees.employmentStatus, params.status));
+  }
+
+  if (params.rankGrade && params.rankGrade !== "all") {
+    conditions.push(eq(employees.rankGrade, params.rankGrade));
+  }
+
+  if (params.birthYear) {
+    conditions.push(
+      and(
+        gte(employees.birthDate, `${params.birthYear}-01-01`),
+        lte(employees.birthDate, `${params.birthYear}-12-31`)
+      )
+    );
   }
 
   if (params.processStatus && params.processStatus !== "all") {
@@ -203,16 +220,25 @@ export async function queryEmployees(params: EmployeeQueryParams = {}) {
   }
 
   const sortDirectionFn = sortDir === "desc" ? desc : asc;
-  const orderExpr =
-    sortBy === "birthDate"
-      ? sortDirectionFn(employees.birthDate)
-      : sortBy === "fullName"
-        ? sortDirectionFn(employees.fullName)
-        : sortBy === "rankGrade"
-          ? sortDirectionFn(employees.rankGrade)
-          : sortBy === "unitName"
-            ? sortDirectionFn(units.name)
-            : sortDirectionFn(employees.retirementDate);
+  const lowerFullNameExpr = sql`LOWER(${employees.fullName})`;
+
+  const orderExprs =
+    sortBy === "fullName"
+      ? [sortDirectionFn(lowerFullNameExpr)]
+      : sortBy === "unitName"
+        ? [
+            sortDirectionFn(units.name),
+            sortDirectionFn(employees.employmentStatus),
+            asc(lowerFullNameExpr),
+          ]
+        : [
+            sortBy === "birthDate"
+              ? sortDirectionFn(employees.birthDate)
+              : sortBy === "rankGrade"
+                ? sortDirectionFn(employees.rankGrade)
+                : sortDirectionFn(employees.retirementDate),
+            asc(lowerFullNameExpr),
+          ];
 
   const rows = await db
     .select({
@@ -222,7 +248,7 @@ export async function queryEmployees(params: EmployeeQueryParams = {}) {
     .from(employees)
     .innerJoin(units, eq(employees.unitId, units.id))
     .where(conditions.length > 0 ? and(...conditions) : undefined)
-    .orderBy(orderExpr, asc(employees.fullName));
+    .orderBy(...orderExprs);
 
   const today = new Date();
   const thresholds = {
@@ -267,14 +293,23 @@ export async function queryEmployees(params: EmployeeQueryParams = {}) {
   const start = (safePage - 1) * pageSize;
   const items = filtered.slice(start, start + pageSize);
 
-  // Hitung counter tab urgensi dari seluruh pegawai aktif
-  const activeRows = await db
+  // Hitung counter tab urgensi dari seluruh pegawai aktif + opsi filter sesuai cakupan isActive
+  const metaRows = await db
     .select({
       birthDate: employees.birthDate,
       retirementDate: employees.retirementDate,
+      rankGrade: employees.rankGrade,
+      isActive: employees.isActive,
     })
-    .from(employees)
-    .where(eq(employees.isActive, true));
+    .from(employees);
+
+  const activeRows = metaRows.filter((r) => r.isActive);
+  const scopeRows =
+    params.isActive === "all"
+      ? metaRows
+      : params.isActive === false
+        ? metaRows.filter((r) => !r.isActive)
+        : activeRows;
 
   const counts: UrgencyCounts = {
     allActive: activeRows.length,
@@ -285,11 +320,7 @@ export async function queryEmployees(params: EmployeeQueryParams = {}) {
     twoToFive: 0,
   };
 
-  const yearSet = new Set<number>();
   for (const r of activeRows) {
-    const year = Number(r.retirementDate.slice(0, 4));
-    if (!Number.isNaN(year)) yearSet.add(year);
-
     const m = getRetirementMetrics(
       r.birthDate,
       r.retirementDate,
@@ -306,7 +337,26 @@ export async function queryEmployees(params: EmployeeQueryParams = {}) {
     }
   }
 
+  const yearSet = new Set<number>();
+  const birthYearSet = new Set<number>();
+  const rankGradeSet = new Set<string>();
+
+  for (const r of scopeRows) {
+    const tmtYearVal = Number(r.retirementDate.slice(0, 4));
+    if (!Number.isNaN(tmtYearVal)) yearSet.add(tmtYearVal);
+
+    const birthYearVal = Number(r.birthDate.slice(0, 4));
+    if (!Number.isNaN(birthYearVal)) birthYearSet.add(birthYearVal);
+
+    const grade = r.rankGrade.trim();
+    if (grade) rankGradeSet.add(grade);
+  }
+
   const availableYears = Array.from(yearSet).sort((a, b) => a - b);
+  const availableBirthYears = Array.from(birthYearSet).sort((a, b) => a - b);
+  const availableRankGrades = Array.from(rankGradeSet).sort((a, b) =>
+    a.localeCompare(b, "id")
+  );
 
   return {
     dbConfigured: true,
@@ -319,6 +369,8 @@ export async function queryEmployees(params: EmployeeQueryParams = {}) {
     },
     counts,
     availableYears,
+    availableBirthYears,
+    availableRankGrades,
     units: unitList,
     settings,
   };

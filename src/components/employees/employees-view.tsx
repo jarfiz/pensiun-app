@@ -1,11 +1,16 @@
 "use client";
 
-import React, { useEffect, useState } from "react";
+import React, { useEffect, useMemo, useState } from "react";
+import { usePathname, useRouter, useSearchParams } from "next/navigation";
 import {
   Archive,
+  ArrowDown,
+  ArrowUp,
+  ArrowUpDown,
   CheckCircle2,
   Pencil,
   Plus,
+  RotateCcw,
   Search,
   Trash2,
 } from "lucide-react";
@@ -13,6 +18,13 @@ import { toast } from "sonner";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from "@/components/ui/select";
 import {
   Table,
   TableBody,
@@ -23,7 +35,7 @@ import {
 } from "@/components/ui/table";
 import { Tabs, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import type { AppSettings, Unit } from "@/db/schema";
-import type { EnrichedEmployee } from "@/lib/employee-queries";
+import type { EmployeeSortBy, EnrichedEmployee } from "@/lib/employee-queries";
 import {
   EMPLOYMENT_STATUS_SHORT,
   formatIndonesianDate,
@@ -34,14 +46,112 @@ interface EmployeesResponse {
   dbConfigured: boolean;
   items: EnrichedEmployee[];
   pagination: { total: number };
+  availableYears: number[];
+  availableBirthYears: number[];
+  availableRankGrades: string[];
   units: Unit[];
   settings: AppSettings;
 }
 
+const VALID_SORT_COLUMNS: EmployeeSortBy[] = [
+  "fullName",
+  "unitName",
+  "rankGrade",
+  "birthDate",
+  "retirementDate",
+];
+
+const SORT_ITEMS: Record<string, string> = {
+  "fullName:asc": "Nama (A–Z)",
+  "fullName:desc": "Nama (Z–A)",
+  "unitName:asc": "Unit & Status (A–Z)",
+  "unitName:desc": "Unit & Status (Z–A)",
+  "rankGrade:asc": "Golongan (A–Z)",
+  "rankGrade:desc": "Golongan (Z–A)",
+  "birthDate:asc": "Tgl Lahir (Tertua)",
+  "birthDate:desc": "Tgl Lahir (Termuda)",
+  "retirementDate:asc": "TMT Pensiun (Tercepat)",
+  "retirementDate:desc": "TMT Pensiun (Terlama)",
+};
+
+const STATUS_ITEMS: Record<string, string> = {
+  all: "Semua Status",
+  PNS: "PNS",
+  PPPK_FULL: "PPPK Penuh Waktu",
+  PPPK_PART: "PPPK Paruh Waktu",
+};
+
+function SortableHeader({
+  label,
+  columnKey,
+  activeSortBy,
+  activeSortDir,
+  onSort,
+}: {
+  label: string;
+  columnKey: EmployeeSortBy;
+  activeSortBy: EmployeeSortBy;
+  activeSortDir: "asc" | "desc";
+  onSort: (col: EmployeeSortBy) => void;
+}) {
+  const isActive = activeSortBy === columnKey;
+  return (
+    <button
+      type="button"
+      onClick={() => onSort(columnKey)}
+      className="inline-flex items-center gap-1 text-left font-semibold text-slate-700 hover:text-slate-900"
+    >
+      <span>{label}</span>
+      {isActive ? (
+        activeSortDir === "asc" ? (
+          <ArrowUp className="size-3.5 text-[#1E3A5F]" />
+        ) : (
+          <ArrowDown className="size-3.5 text-[#1E3A5F]" />
+        )
+      ) : (
+        <ArrowUpDown className="size-3.5 text-slate-400" />
+      )}
+    </button>
+  );
+}
+
 export function EmployeesView() {
-  const [tab, setTab] = useState<"active" | "archived">("active");
-  const [searchInput, setSearchInput] = useState("");
-  const [debouncedQ, setDebouncedQ] = useState("");
+  const router = useRouter();
+  const pathname = usePathname();
+  const searchParams = useSearchParams();
+
+  const [tab, setTab] = useState<"active" | "archived">(() =>
+    searchParams.get("tab") === "archived" ? "archived" : "active"
+  );
+  const [searchInput, setSearchInput] = useState(
+    () => searchParams.get("q") ?? ""
+  );
+  const [debouncedQ, setDebouncedQ] = useState(
+    () => searchParams.get("q") ?? ""
+  );
+  const [unitId, setUnitId] = useState(
+    () => searchParams.get("unitId") ?? "all"
+  );
+  const [status, setStatus] = useState(
+    () => searchParams.get("status") ?? "all"
+  );
+  const [rankGrade, setRankGrade] = useState(
+    () => searchParams.get("rankGrade") ?? "all"
+  );
+  const [birthYear, setBirthYear] = useState(
+    () => searchParams.get("birthYear") ?? "all"
+  );
+  const [tmtYear, setTmtYear] = useState(
+    () => searchParams.get("tmtYear") ?? "all"
+  );
+  const [sortBy, setSortBy] = useState<EmployeeSortBy>(() => {
+    const sb = searchParams.get("sortBy") as EmployeeSortBy | null;
+    return sb && VALID_SORT_COLUMNS.includes(sb) ? sb : "fullName";
+  });
+  const [sortDir, setSortDir] = useState<"asc" | "desc">(() =>
+    searchParams.get("sortDir") === "desc" ? "desc" : "asc"
+  );
+
   const [data, setData] = useState<EmployeesResponse | null>(null);
   const [loading, setLoading] = useState(true);
   const [refreshTick, setRefreshTick] = useState(0);
@@ -60,15 +170,50 @@ export function EmployeesView() {
     return () => clearTimeout(timer);
   }, [searchInput, debouncedQ]);
 
+  const urlQueryString = useMemo(() => {
+    const params = new URLSearchParams();
+    if (tab !== "active") params.set("tab", tab);
+    if (debouncedQ.trim()) params.set("q", debouncedQ.trim());
+    if (unitId !== "all") params.set("unitId", unitId);
+    if (status !== "all") params.set("status", status);
+    if (rankGrade !== "all") params.set("rankGrade", rankGrade);
+    if (birthYear !== "all") params.set("birthYear", birthYear);
+    if (tmtYear !== "all") params.set("tmtYear", tmtYear);
+    if (sortBy !== "fullName") params.set("sortBy", sortBy);
+    if (sortDir !== "asc") params.set("sortDir", sortDir);
+    return params.toString();
+  }, [
+    tab,
+    debouncedQ,
+    unitId,
+    status,
+    rankGrade,
+    birthYear,
+    tmtYear,
+    sortBy,
+    sortDir,
+  ]);
+
   useEffect(() => {
+    const targetUrl = urlQueryString ? `${pathname}?${urlQueryString}` : pathname;
+    router.replace(targetUrl, { scroll: false });
+  }, [pathname, router, urlQueryString]);
+
+  useEffect(() => {
+    void refreshTick;
     const controller = new AbortController();
     const params = new URLSearchParams({
       isActive: tab === "active" ? "true" : "false",
-      pageSize: "200",
-      sortBy: "fullName",
-      sortDir: "asc",
+      pageSize: "500",
+      sortBy,
+      sortDir,
     });
     if (debouncedQ.trim()) params.set("q", debouncedQ.trim());
+    if (unitId !== "all") params.set("unitId", unitId);
+    if (status !== "all") params.set("status", status);
+    if (rankGrade !== "all") params.set("rankGrade", rankGrade);
+    if (birthYear !== "all") params.set("birthYear", birthYear);
+    if (tmtYear !== "all") params.set("tmtYear", tmtYear);
 
     fetch(`/api/employees?${params.toString()}`, {
       signal: controller.signal,
@@ -90,7 +235,60 @@ export function EmployeesView() {
       });
 
     return () => controller.abort();
-  }, [tab, debouncedQ, refreshTick]);
+  }, [
+    tab,
+    debouncedQ,
+    unitId,
+    status,
+    rankGrade,
+    birthYear,
+    tmtYear,
+    sortBy,
+    sortDir,
+    refreshTick,
+  ]);
+
+  const handleSortChange = (col: EmployeeSortBy) => {
+    setLoading(true);
+    if (sortBy === col) {
+      setSortDir((prev) => (prev === "asc" ? "desc" : "asc"));
+    } else {
+      setSortBy(col);
+      setSortDir("asc");
+    }
+  };
+
+  const handleSortSelect = (val: string | null) => {
+    if (!val) return;
+    const [col, dir] = val.split(":") as [EmployeeSortBy, "asc" | "desc"];
+    if (!VALID_SORT_COLUMNS.includes(col)) return;
+    setLoading(true);
+    setSortBy(col);
+    setSortDir(dir === "desc" ? "desc" : "asc");
+  };
+
+  const hasActiveFilters =
+    Boolean(searchInput.trim()) ||
+    unitId !== "all" ||
+    status !== "all" ||
+    rankGrade !== "all" ||
+    birthYear !== "all" ||
+    tmtYear !== "all" ||
+    sortBy !== "fullName" ||
+    sortDir !== "asc";
+
+  const handleResetFilters = () => {
+    setLoading(true);
+    setSearchInput("");
+    setDebouncedQ("");
+    setUnitId("all");
+    setStatus("all");
+    setRankGrade("all");
+    setBirthYear("all");
+    setTmtYear("all");
+    setSortBy("fullName");
+    setSortDir("asc");
+  };
 
   const handleToggleActive = async (emp: EnrichedEmployee) => {
     const nextActive = !emp.isActive;
@@ -143,6 +341,34 @@ export function EmployeesView() {
     }
   };
 
+  const units = data?.units ?? [];
+  const availableRankGrades = data?.availableRankGrades ?? [];
+  const availableBirthYears = data?.availableBirthYears ?? [];
+  const availableYears = data?.availableYears ?? [];
+
+  const unitItems: Record<string, string> = {
+    all: "Semua Unit Kerja",
+    ...Object.fromEntries(units.map((u) => [String(u.id), u.name])),
+  };
+  const rankGradeItems: Record<string, string> = {
+    all: "Semua Golongan",
+    ...Object.fromEntries(availableRankGrades.map((g) => [g, `Gol. ${g}`])),
+  };
+  const birthYearItems: Record<string, string> = {
+    all: "Semua Tahun Lahir",
+    ...Object.fromEntries(
+      availableBirthYears.map((yr) => [String(yr), `Lahir ${yr}`])
+    ),
+  };
+  const tmtYearItems: Record<string, string> = {
+    all: "Semua Tahun Pensiun",
+    ...Object.fromEntries(
+      availableYears.map((yr) => [String(yr), `Pensiun ${yr}`])
+    ),
+  };
+
+  const totalCount = data?.pagination.total ?? 0;
+
   return (
     <div className="space-y-4">
       <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
@@ -167,43 +393,238 @@ export function EmployeesView() {
         </Button>
       </div>
 
-      <div className="flex flex-col gap-3 rounded-lg border border-slate-200 bg-white p-3 sm:flex-row sm:items-center sm:justify-between">
-        <Tabs
-          value={tab}
-          onValueChange={(v) => {
-            setLoading(true);
-            setTab(v as "active" | "archived");
-          }}
-        >
-          <TabsList>
-            <TabsTrigger value="active">Pegawai Aktif</TabsTrigger>
-            <TabsTrigger value="archived">Arsip Purna Tugas</TabsTrigger>
-          </TabsList>
-        </Tabs>
+      <div className="space-y-3 rounded-lg border border-slate-200 bg-white p-3">
+        {/* Baris 1: Tab Status Aktif/Arsip, Pencarian, dan Urutkan */}
+        <div className="flex flex-col gap-3 lg:flex-row lg:items-center lg:justify-between">
+          <Tabs
+            value={tab}
+            onValueChange={(v) => {
+              setLoading(true);
+              setTab(v as "active" | "archived");
+              setRankGrade("all");
+              setBirthYear("all");
+              setTmtYear("all");
+            }}
+          >
+            <TabsList>
+              <TabsTrigger value="active">Pegawai Aktif</TabsTrigger>
+              <TabsTrigger value="archived">Arsip Purna Tugas</TabsTrigger>
+            </TabsList>
+          </Tabs>
 
-        <div className="relative w-full sm:w-80">
-          <Search className="pointer-events-none absolute top-1/2 left-2.5 size-4 -translate-y-1/2 text-slate-400" />
-          <Input
-            value={searchInput}
-            onChange={(e) => setSearchInput(e.target.value)}
-            placeholder="Cari Nama, NIP, atau Jabatan..."
-            className="h-9 pl-8 text-sm"
-          />
+          <div className="flex flex-col gap-2.5 sm:flex-row sm:items-center">
+            <div className="relative w-full sm:w-72">
+              <Search className="pointer-events-none absolute top-1/2 left-2.5 size-4 -translate-y-1/2 text-slate-400" />
+              <Input
+                value={searchInput}
+                onChange={(e) => setSearchInput(e.target.value)}
+                placeholder="Cari Nama, NIP, atau Jabatan..."
+                className="h-9 pl-8 text-sm"
+              />
+            </div>
+
+            <div className="w-full sm:w-52">
+              <Select
+                value={`${sortBy}:${sortDir}`}
+                onValueChange={handleSortSelect}
+                items={SORT_ITEMS}
+              >
+                <SelectTrigger className="h-9 w-full text-xs">
+                  <SelectValue placeholder="Urutkan" />
+                </SelectTrigger>
+                <SelectContent>
+                  {Object.entries(SORT_ITEMS).map(([val, label]) => (
+                    <SelectItem key={val} value={val}>
+                      {label}
+                    </SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+            </div>
+          </div>
+        </div>
+
+        {/* Baris 2: Filter Unit, Status, Golongan, Tahun Lahir, Tahun TMT Pensiun */}
+        <div className="grid grid-cols-1 gap-2.5 sm:grid-cols-2 lg:grid-cols-5">
+          <Select
+            value={unitId}
+            onValueChange={(v) => {
+              setLoading(true);
+              setUnitId(v ?? "all");
+            }}
+            items={unitItems}
+          >
+            <SelectTrigger className="h-9 w-full text-xs">
+              <SelectValue placeholder="Semua Unit Kerja" />
+            </SelectTrigger>
+            <SelectContent>
+              <SelectItem value="all">Semua Unit Kerja</SelectItem>
+              {units.map((u) => (
+                <SelectItem key={u.id} value={String(u.id)}>
+                  {u.name}
+                </SelectItem>
+              ))}
+            </SelectContent>
+          </Select>
+
+          <Select
+            value={status}
+            onValueChange={(v) => {
+              setLoading(true);
+              setStatus(v ?? "all");
+            }}
+            items={STATUS_ITEMS}
+          >
+            <SelectTrigger className="h-9 w-full text-xs">
+              <SelectValue placeholder="Semua Status" />
+            </SelectTrigger>
+            <SelectContent>
+              <SelectItem value="all">Semua Status</SelectItem>
+              <SelectItem value="PNS">PNS</SelectItem>
+              <SelectItem value="PPPK_FULL">PPPK Penuh Waktu</SelectItem>
+              <SelectItem value="PPPK_PART">PPPK Paruh Waktu</SelectItem>
+            </SelectContent>
+          </Select>
+
+          <Select
+            value={rankGrade}
+            onValueChange={(v) => {
+              setLoading(true);
+              setRankGrade(v ?? "all");
+            }}
+            items={rankGradeItems}
+          >
+            <SelectTrigger className="h-9 w-full text-xs">
+              <SelectValue placeholder="Semua Golongan" />
+            </SelectTrigger>
+            <SelectContent>
+              <SelectItem value="all">Semua Golongan</SelectItem>
+              {availableRankGrades.map((g) => (
+                <SelectItem key={g} value={g}>
+                  Gol. {g}
+                </SelectItem>
+              ))}
+            </SelectContent>
+          </Select>
+
+          <Select
+            value={birthYear}
+            onValueChange={(v) => {
+              setLoading(true);
+              setBirthYear(v ?? "all");
+            }}
+            items={birthYearItems}
+          >
+            <SelectTrigger className="h-9 w-full text-xs">
+              <SelectValue placeholder="Semua Tahun Lahir" />
+            </SelectTrigger>
+            <SelectContent>
+              <SelectItem value="all">Semua Tahun Lahir</SelectItem>
+              {availableBirthYears.map((yr) => (
+                <SelectItem key={yr} value={String(yr)}>
+                  Lahir {yr}
+                </SelectItem>
+              ))}
+            </SelectContent>
+          </Select>
+
+          <Select
+            value={tmtYear}
+            onValueChange={(v) => {
+              setLoading(true);
+              setTmtYear(v ?? "all");
+            }}
+            items={tmtYearItems}
+          >
+            <SelectTrigger className="h-9 w-full text-xs">
+              <SelectValue placeholder="Semua Tahun Pensiun" />
+            </SelectTrigger>
+            <SelectContent>
+              <SelectItem value="all">Semua Tahun Pensiun</SelectItem>
+              {availableYears.map((yr) => (
+                <SelectItem key={yr} value={String(yr)}>
+                  Pensiun {yr}
+                </SelectItem>
+              ))}
+            </SelectContent>
+          </Select>
+        </div>
+
+        {/* Footer Info & Reset Filter */}
+        <div className="flex items-center justify-between border-t border-slate-100 pt-2">
+          <p className="text-xs text-slate-600 tabular-nums">
+            Menampilkan{" "}
+            <span className="font-semibold text-slate-900">{totalCount}</span>{" "}
+            pegawai
+          </p>
+
+          {hasActiveFilters && (
+            <Button
+              type="button"
+              variant="ghost"
+              size="sm"
+              onClick={handleResetFilters}
+              className="h-7 gap-1.5 text-xs text-slate-600 hover:text-slate-900"
+            >
+              <RotateCcw className="size-3.5" />
+              <span>Reset Filter</span>
+            </Button>
+          )}
         </div>
       </div>
 
       <div className="rounded-lg border border-slate-200 bg-white">
-        <div className="overflow-x-auto">
+        <div className="max-h-[640px] overflow-x-auto overflow-y-auto">
           <Table>
-            <TableHeader className="bg-slate-50">
-              <TableRow>
+            <TableHeader className="sticky top-0 z-10 bg-slate-50 shadow-[0_1px_0_0_#E2E8F0]">
+              <TableRow className="hover:bg-slate-50">
                 <TableHead className="w-12 text-xs">No</TableHead>
                 <TableHead className="text-xs">NIP</TableHead>
-                <TableHead className="text-xs">Nama &amp; Jabatan</TableHead>
-                <TableHead className="text-xs">Unit &amp; Status</TableHead>
-                <TableHead className="text-xs">Gol.</TableHead>
-                <TableHead className="text-xs">Tgl Lahir</TableHead>
-                <TableHead className="text-xs">TMT Pensiun</TableHead>
+                <TableHead className="text-xs">
+                  <SortableHeader
+                    label="Nama & Jabatan"
+                    columnKey="fullName"
+                    activeSortBy={sortBy}
+                    activeSortDir={sortDir}
+                    onSort={handleSortChange}
+                  />
+                </TableHead>
+                <TableHead className="text-xs">
+                  <SortableHeader
+                    label="Unit & Status"
+                    columnKey="unitName"
+                    activeSortBy={sortBy}
+                    activeSortDir={sortDir}
+                    onSort={handleSortChange}
+                  />
+                </TableHead>
+                <TableHead className="text-xs">
+                  <SortableHeader
+                    label="Gol."
+                    columnKey="rankGrade"
+                    activeSortBy={sortBy}
+                    activeSortDir={sortDir}
+                    onSort={handleSortChange}
+                  />
+                </TableHead>
+                <TableHead className="text-xs">
+                  <SortableHeader
+                    label="Tgl Lahir"
+                    columnKey="birthDate"
+                    activeSortBy={sortBy}
+                    activeSortDir={sortDir}
+                    onSort={handleSortChange}
+                  />
+                </TableHead>
+                <TableHead className="text-xs">
+                  <SortableHeader
+                    label="TMT Pensiun"
+                    columnKey="retirementDate"
+                    activeSortBy={sortBy}
+                    activeSortDir={sortDir}
+                    onSort={handleSortChange}
+                  />
+                </TableHead>
                 <TableHead className="text-right text-xs">Aksi</TableHead>
               </TableRow>
             </TableHeader>
@@ -223,9 +644,11 @@ export function EmployeesView() {
                     colSpan={8}
                     className="h-32 text-center text-sm text-slate-500"
                   >
-                    {tab === "active"
-                      ? "Belum ada data pegawai aktif."
-                      : "Belum ada pegawai di arsip purna tugas."}
+                    {hasActiveFilters
+                      ? "Tidak ada data pegawai yang sesuai dengan filter."
+                      : tab === "active"
+                        ? "Belum ada data pegawai aktif."
+                        : "Belum ada pegawai di arsip purna tugas."}
                   </TableCell>
                 </TableRow>
               ) : (
@@ -320,7 +743,7 @@ export function EmployeesView() {
         open={dialogOpen}
         onOpenChange={setDialogOpen}
         employee={editingEmployee}
-        units={data?.units ?? []}
+        units={units}
         defaultBupAge={data?.settings?.defaultBupAge ?? 60}
         tmtRule={data?.settings?.tmtRule ?? "FIRST_OF_NEXT_MONTH"}
         onSaved={() => {
