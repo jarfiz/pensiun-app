@@ -43,6 +43,13 @@ export async function ensureDefaultSeed() {
 }
 
 async function main() {
+  if (!process.env.DATABASE_URL && typeof process.loadEnvFile === "function") {
+    try {
+      process.loadEnvFile();
+    } catch {
+      // Abaikan jika file .env tidak ada (mis. env sudah disuntikkan dari sistem)
+    }
+  }
   await ensureDefaultSeed();
   console.log("Seed default units dan app_settings berhasil dijalankan.");
   process.exit(0);
