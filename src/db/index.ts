@@ -4,6 +4,7 @@ import * as schema from "./schema";
 
 const globalForDb = globalThis as unknown as {
   pgClient: ReturnType<typeof postgres> | undefined;
+  dbInstance: ReturnType<typeof drizzle<typeof schema>> | undefined;
 };
 
 function createClient() {
@@ -15,7 +16,7 @@ function createClient() {
   }
   return postgres(connectionString, {
     max: 10,
-    idle_timeout: 20,
+    idle_timeout: 60,
     connect_timeout: 10,
   });
 }
@@ -25,11 +26,13 @@ export function isDatabaseConfigured(): boolean {
 }
 
 export function getDb() {
-  const client = globalForDb.pgClient ?? createClient();
-  if (process.env.NODE_ENV !== "production") {
-    globalForDb.pgClient = client;
+  if (!globalForDb.pgClient) {
+    globalForDb.pgClient = createClient();
   }
-  return drizzle(client, { schema });
+  if (!globalForDb.dbInstance) {
+    globalForDb.dbInstance = drizzle(globalForDb.pgClient, { schema });
+  }
+  return globalForDb.dbInstance;
 }
 
 export const db = new Proxy({} as ReturnType<typeof drizzle<typeof schema>>, {

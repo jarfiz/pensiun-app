@@ -22,6 +22,7 @@ import {
 } from "@/components/ui/select";
 import { Textarea } from "@/components/ui/textarea";
 import type { EmploymentStatus, TmtRule, Unit } from "@/db/schema";
+import { invalidateClientCache } from "@/lib/client-fetch-cache";
 import type { EnrichedEmployee } from "@/lib/employee-queries";
 import { formatIndonesianDate } from "@/lib/formatters";
 import { parseNip } from "@/lib/nip-parser";
@@ -140,6 +141,7 @@ export function EmployeeFormDialog({
         throw new Error(json.error ?? "Gagal menyimpan data pegawai.");
       }
 
+      invalidateClientCache();
       toast.success(
         isEdit
           ? "Data pegawai berhasil diperbarui."

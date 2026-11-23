@@ -6,6 +6,7 @@ import { db, isDatabaseConfigured } from "@/db";
 import { employees } from "@/db/schema";
 import {
   getAppSettingsOrDefault,
+  invalidateEmployeeCache,
   queryEmployees,
   type EmployeeSortBy,
   type UrgencyFilter,
@@ -158,6 +159,8 @@ export async function POST(request: NextRequest) {
         notes: input.notes ?? null,
       })
       .returning();
+
+    invalidateEmployeeCache();
 
     return NextResponse.json({ employee: created }, { status: 201 });
   } catch (error) {

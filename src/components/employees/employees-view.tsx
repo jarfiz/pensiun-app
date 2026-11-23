@@ -35,6 +35,11 @@ import {
 } from "@/components/ui/table";
 import { Tabs, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import type { AppSettings, Unit } from "@/db/schema";
+import {
+  fetchCachedJson,
+  getCachedJson,
+  invalidateClientCache,
+} from "@/lib/client-fetch-cache";
 import type { EmployeeSortBy, EnrichedEmployee } from "@/lib/employee-queries";
 import {
   EMPLOYMENT_STATUS_SHORT,
@@ -152,8 +157,38 @@ export function EmployeesView() {
     searchParams.get("sortDir") === "desc" ? "desc" : "asc"
   );
 
-  const [data, setData] = useState<EmployeesResponse | null>(null);
-  const [loading, setLoading] = useState(true);
+  const apiUrl = useMemo(() => {
+    const params = new URLSearchParams({
+      isActive: tab === "active" ? "true" : "false",
+      pageSize: "500",
+      sortBy,
+      sortDir,
+    });
+    if (debouncedQ.trim()) params.set("q", debouncedQ.trim());
+    if (unitId !== "all") params.set("unitId", unitId);
+    if (status !== "all") params.set("status", status);
+    if (rankGrade !== "all") params.set("rankGrade", rankGrade);
+    if (birthYear !== "all") params.set("birthYear", birthYear);
+    if (tmtYear !== "all") params.set("tmtYear", tmtYear);
+    return `/api/employees?${params.toString()}`;
+  }, [
+    tab,
+    debouncedQ,
+    unitId,
+    status,
+    rankGrade,
+    birthYear,
+    tmtYear,
+    sortBy,
+    sortDir,
+  ]);
+
+  const [data, setData] = useState<EmployeesResponse | null>(() =>
+    getCachedJson<EmployeesResponse>(apiUrl)
+  );
+  const [loading, setLoading] = useState(
+    () => !getCachedJson<EmployeesResponse>(apiUrl)
+  );
   const [refreshTick, setRefreshTick] = useState(0);
 
   const [dialogOpen, setDialogOpen] = useState(false);
@@ -166,7 +201,7 @@ export function EmployeesView() {
         setLoading(true);
         setDebouncedQ(searchInput);
       }
-    }, 300);
+    }, 150);
     return () => clearTimeout(timer);
   }, [searchInput, debouncedQ]);
 
@@ -194,34 +229,18 @@ export function EmployeesView() {
     sortDir,
   ]);
 
+  const currentSearchString = searchParams.toString();
   useEffect(() => {
+    if (urlQueryString === currentSearchString) return;
     const targetUrl = urlQueryString ? `${pathname}?${urlQueryString}` : pathname;
     router.replace(targetUrl, { scroll: false });
-  }, [pathname, router, urlQueryString]);
+  }, [currentSearchString, pathname, router, urlQueryString]);
 
   useEffect(() => {
     void refreshTick;
     const controller = new AbortController();
-    const params = new URLSearchParams({
-      isActive: tab === "active" ? "true" : "false",
-      pageSize: "500",
-      sortBy,
-      sortDir,
-    });
-    if (debouncedQ.trim()) params.set("q", debouncedQ.trim());
-    if (unitId !== "all") params.set("unitId", unitId);
-    if (status !== "all") params.set("status", status);
-    if (rankGrade !== "all") params.set("rankGrade", rankGrade);
-    if (birthYear !== "all") params.set("birthYear", birthYear);
-    if (tmtYear !== "all") params.set("tmtYear", tmtYear);
 
-    fetch(`/api/employees?${params.toString()}`, {
-      signal: controller.signal,
-    })
-      .then((res) => {
-        if (!res.ok) throw new Error("Gagal memuat data pegawai.");
-        return res.json() as Promise<EmployeesResponse>;
-      })
+    fetchCachedJson<EmployeesResponse>(apiUrl, controller.signal)
       .then((json) => {
         setData(json);
       })
@@ -235,18 +254,7 @@ export function EmployeesView() {
       });
 
     return () => controller.abort();
-  }, [
-    tab,
-    debouncedQ,
-    unitId,
-    status,
-    rankGrade,
-    birthYear,
-    tmtYear,
-    sortBy,
-    sortDir,
-    refreshTick,
-  ]);
+  }, [apiUrl, refreshTick]);
 
   const handleSortChange = (col: EmployeeSortBy) => {
     setLoading(true);
@@ -306,6 +314,7 @@ export function EmployeesView() {
         body: JSON.stringify({ isActive: nextActive }),
       });
       if (!res.ok) throw new Error("Gagal memperbarui status pegawai.");
+      invalidateClientCache();
       toast.success(
         nextActive
           ? "Pegawai diaktifkan kembali."
@@ -331,6 +340,7 @@ export function EmployeesView() {
         method: "DELETE",
       });
       if (!res.ok) throw new Error("Gagal menghapus pegawai.");
+      invalidateClientCache();
       toast.success("Data pegawai berhasil dihapus.");
       setLoading(true);
       setRefreshTick((t) => t + 1);
@@ -628,8 +638,14 @@ export function EmployeesView() {
                 <TableHead className="text-right text-xs">Aksi</TableHead>
               </TableRow>
             </TableHeader>
-            <TableBody>
-              {loading ? (
+            <TableBody
+              className={
+                loading && (data?.items.length ?? 0) > 0
+                  ? "opacity-60 transition-opacity"
+                  : undefined
+              }
+            >
+              {loading && (data?.items.length ?? 0) === 0 ? (
                 <TableRow>
                   <TableCell
                     colSpan={8}

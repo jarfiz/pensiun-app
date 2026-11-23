@@ -326,8 +326,14 @@ export function MonitoringTable({
               </TableRow>
             ))}
           </TableHeader>
-          <TableBody>
-            {loading ? (
+          <TableBody
+            className={
+              loading && items.length > 0
+                ? "opacity-60 transition-opacity"
+                : undefined
+            }
+          >
+            {loading && items.length === 0 ? (
               <TableRow>
                 <TableCell
                   colSpan={columns.length}

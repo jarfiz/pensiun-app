@@ -1,10 +1,13 @@
 import { NextRequest, NextResponse } from "next/server";
 import { unstable_rethrow } from "next/navigation";
-import { eq } from "drizzle-orm";
+import { eq, sql } from "drizzle-orm";
 import { z } from "zod";
 import { db, isDatabaseConfigured } from "@/db";
 import { appSettings, employees } from "@/db/schema";
-import { getAppSettingsOrDefault } from "@/lib/employee-queries";
+import {
+  getAppSettingsOrDefault,
+  invalidateEmployeeCache,
+} from "@/lib/employee-queries";
 import { calculateRetirementDate } from "@/lib/retirement";
 
 const updateSettingsSchema = z.object({
@@ -17,6 +20,8 @@ const updateSettingsSchema = z.object({
   upcomingMonths: z.coerce.number().int().min(6).max(60),
   recalculateExistingBup: z.boolean().optional(),
 });
+
+const UPDATE_CHUNK_SIZE = 100;
 
 export async function GET() {
   try {
@@ -91,32 +96,52 @@ export async function PATCH(request: NextRequest) {
         })
         .from(employees);
 
-      await db.transaction(async (tx) => {
-        for (const emp of allEmployees) {
+      if (allEmployees.length > 0) {
+        const updates = allEmployees.map((emp) => {
           const nextBup =
             input.recalculateExistingBup &&
             emp.bupAge === prevSettings.defaultBupAge
               ? input.defaultBupAge
               : emp.bupAge;
 
-          const nextRetirementDate = calculateRetirementDate(
-            emp.birthDate,
-            nextBup,
-            input.tmtRule
-          );
+          return {
+            id: emp.id,
+            bupAge: nextBup,
+            retirementDate: calculateRetirementDate(
+              emp.birthDate,
+              nextBup,
+              input.tmtRule
+            ),
+          };
+        });
 
-          await tx
-            .update(employees)
-            .set({
-              bupAge: nextBup,
-              retirementDate: nextRetirementDate,
-              updatedAt: new Date(),
-            })
-            .where(eq(employees.id, emp.id));
-          recalculatedCount += 1;
-        }
-      });
+        await db.transaction(async (tx) => {
+          for (let i = 0; i < updates.length; i += UPDATE_CHUNK_SIZE) {
+            const chunk = updates.slice(i, i + UPDATE_CHUNK_SIZE);
+            const valuesSql = sql.join(
+              chunk.map(
+                (u) =>
+                  sql`(${u.id}::int, ${u.bupAge}::int, ${u.retirementDate}::date)`
+              ),
+              sql`, `
+            );
+
+            await tx.execute(sql`
+              UPDATE employees AS e
+              SET bup_age = v.bup_age,
+                  retirement_date = v.retirement_date,
+                  updated_at = NOW()
+              FROM (VALUES ${valuesSql}) AS v(id, bup_age, retirement_date)
+              WHERE e.id = v.id
+            `);
+          }
+        });
+
+        recalculatedCount = updates.length;
+      }
     }
+
+    invalidateEmployeeCache();
 
     return NextResponse.json({
       settings: updated,

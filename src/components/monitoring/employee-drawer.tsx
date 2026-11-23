@@ -23,6 +23,7 @@ import {
 } from "@/components/ui/sheet";
 import { Textarea } from "@/components/ui/textarea";
 import type { RetirementProcessStatus, TmtRule } from "@/db/schema";
+import { invalidateClientCache } from "@/lib/client-fetch-cache";
 import type { EnrichedEmployee } from "@/lib/employee-queries";
 import {
   EMPLOYMENT_STATUS_LABELS,
@@ -99,6 +100,7 @@ export function EmployeeDrawer({
       if (!res.ok) {
         throw new Error(json.error ?? "Gagal memperbarui data pegawai.");
       }
+      invalidateClientCache();
       toast.success("Data monitoring pegawai berhasil diperbarui.");
       onUpdated();
       onOpenChange(false);
@@ -131,6 +133,7 @@ export function EmployeeDrawer({
       if (!res.ok) {
         throw new Error(json.error ?? "Gagal mengubah status arsip.");
       }
+      invalidateClientCache();
       toast.success(
         nextActive
           ? "Pegawai diaktifkan kembali."

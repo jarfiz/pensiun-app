@@ -6,6 +6,7 @@ import { FileSpreadsheet, ArrowRight } from "lucide-react";
 import { toast } from "sonner";
 import { buttonVariants } from "@/components/ui/button";
 import type { Unit } from "@/db/schema";
+import { fetchCachedJson, getCachedJson } from "@/lib/client-fetch-cache";
 import type { EnrichedEmployee, UrgencyCounts } from "@/lib/employee-queries";
 import { cn } from "@/lib/utils";
 import { KpiCards } from "./kpi-cards";
@@ -19,20 +20,20 @@ interface DashboardApiResponse {
   units: Unit[];
 }
 
+const DASHBOARD_API_URL =
+  "/api/employees?isActive=true&pageSize=500&sortBy=retirementDate&sortDir=asc";
+
 export function DashboardView() {
-  const [data, setData] = useState<DashboardApiResponse | null>(null);
-  const [loading, setLoading] = useState(true);
+  const [data, setData] = useState<DashboardApiResponse | null>(() =>
+    getCachedJson<DashboardApiResponse>(DASHBOARD_API_URL)
+  );
+  const [loading, setLoading] = useState(
+    () => !getCachedJson<DashboardApiResponse>(DASHBOARD_API_URL)
+  );
 
   useEffect(() => {
     const controller = new AbortController();
-    fetch(
-      "/api/employees?isActive=true&pageSize=500&sortBy=retirementDate&sortDir=asc",
-      { signal: controller.signal }
-    )
-      .then((res) => {
-        if (!res.ok) throw new Error("Gagal memuat ringkasan dasbor.");
-        return res.json() as Promise<DashboardApiResponse>;
-      })
+    fetchCachedJson<DashboardApiResponse>(DASHBOARD_API_URL, controller.signal)
       .then((json) => setData(json))
       .catch((error: unknown) => {
         if ((error as { name?: string })?.name === "AbortError") return;

@@ -7,6 +7,7 @@ import { Download, Printer } from "lucide-react";
 import { toast } from "sonner";
 import { buttonVariants } from "@/components/ui/button";
 import type { AppSettings, Unit } from "@/db/schema";
+import { fetchCachedJson, getCachedJson } from "@/lib/client-fetch-cache";
 import type {
   EmployeeSortBy,
   EnrichedEmployee,
@@ -91,13 +92,44 @@ export function MonitoringView() {
     return [15, 25, 50, 100].includes(ps) ? ps : 25;
   });
 
-  const [data, setData] = useState<EmployeesApiResponse | null>(null);
-  const [loading, setLoading] = useState(true);
+  const apiUrl = useMemo(() => {
+    const apiParams = new URLSearchParams({
+      page: String(page),
+      pageSize: String(pageSize),
+      sortBy,
+      sortDir,
+      urgency,
+    });
+    if (debouncedQ.trim()) apiParams.set("q", debouncedQ.trim());
+    if (unitId !== "all") apiParams.set("unitId", unitId);
+    if (status !== "all") apiParams.set("status", status);
+    if (tmtYear !== "all") apiParams.set("tmtYear", tmtYear);
+    if (processStatus !== "all") apiParams.set("processStatus", processStatus);
+    return `/api/employees?${apiParams.toString()}`;
+  }, [
+    debouncedQ,
+    unitId,
+    status,
+    tmtYear,
+    processStatus,
+    urgency,
+    sortBy,
+    sortDir,
+    page,
+    pageSize,
+  ]);
+
+  const [data, setData] = useState<EmployeesApiResponse | null>(() =>
+    getCachedJson<EmployeesApiResponse>(apiUrl)
+  );
+  const [loading, setLoading] = useState(
+    () => !getCachedJson<EmployeesApiResponse>(apiUrl)
+  );
   const [selectedEmployee, setSelectedEmployee] =
     useState<EnrichedEmployee | null>(null);
   const [refreshTick, setRefreshTick] = useState(0);
 
-  // Debounce input pencarian 300ms
+  // Debounce input pencarian 150ms
   useEffect(() => {
     const timer = setTimeout(() => {
       if (searchInput !== debouncedQ) {
@@ -105,7 +137,7 @@ export function MonitoringView() {
         setDebouncedQ(searchInput);
         setPage(1);
       }
-    }, 300);
+    }, 150);
     return () => clearTimeout(timer);
   }, [searchInput, debouncedQ]);
 
@@ -135,36 +167,20 @@ export function MonitoringView() {
     pageSize,
   ]);
 
-  // Sinkronkan filter ke URL tanpa reload
+  // Sinkronkan filter ke URL tanpa reload (lewati jika sudah sama)
+  const currentSearchString = searchParams.toString();
   useEffect(() => {
+    if (queryString === currentSearchString) return;
     const targetUrl = queryString ? `${pathname}?${queryString}` : pathname;
     router.replace(targetUrl, { scroll: false });
-  }, [pathname, queryString, router]);
+  }, [currentSearchString, pathname, queryString, router]);
 
-  // Fetch data dari API
+  // Fetch data dari API dengan cache SWR ringan
   useEffect(() => {
     void refreshTick;
     const controller = new AbortController();
-    const apiParams = new URLSearchParams({
-      page: String(page),
-      pageSize: String(pageSize),
-      sortBy,
-      sortDir,
-      urgency,
-    });
-    if (debouncedQ.trim()) apiParams.set("q", debouncedQ.trim());
-    if (unitId !== "all") apiParams.set("unitId", unitId);
-    if (status !== "all") apiParams.set("status", status);
-    if (tmtYear !== "all") apiParams.set("tmtYear", tmtYear);
-    if (processStatus !== "all") apiParams.set("processStatus", processStatus);
 
-    fetch(`/api/employees?${apiParams.toString()}`, {
-      signal: controller.signal,
-    })
-      .then((res) => {
-        if (!res.ok) throw new Error("Gagal memuat data monitoring.");
-        return res.json() as Promise<EmployeesApiResponse>;
-      })
+    fetchCachedJson<EmployeesApiResponse>(apiUrl, controller.signal)
       .then((json) => {
         setData(json);
       })
@@ -180,19 +196,7 @@ export function MonitoringView() {
       });
 
     return () => controller.abort();
-  }, [
-    debouncedQ,
-    unitId,
-    status,
-    tmtYear,
-    processStatus,
-    urgency,
-    sortBy,
-    sortDir,
-    page,
-    pageSize,
-    refreshTick,
-  ]);
+  }, [apiUrl, refreshTick]);
 
   const handleSortChange = (col: EmployeeSortBy) => {
     setLoading(true);

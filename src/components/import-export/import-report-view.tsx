@@ -15,6 +15,7 @@ import { Button, buttonVariants } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Checkbox } from "@/components/ui/checkbox";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
+import { invalidateClientCache } from "@/lib/client-fetch-cache";
 import type { ImportRowError } from "@/lib/excel-importer";
 import { cn } from "@/lib/utils";
 import { ExcelDropzone } from "./excel-dropzone";
@@ -140,6 +141,7 @@ export function ImportReportView() {
       if (!res.ok) {
         throw new Error(json.error ?? "Gagal menyimpan data impor.");
       }
+      invalidateClientCache();
       setLastResult(json);
       toast.success(
         `Impor selesai: ${json.inserted} baru, ${json.updated} diperbarui, ${json.skipped} dilewati.`

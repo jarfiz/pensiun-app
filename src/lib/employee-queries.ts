@@ -1,4 +1,4 @@
-import { and, asc, desc, eq, gte, ilike, lte, or, sql } from "drizzle-orm";
+import { asc, eq, sql } from "drizzle-orm";
 import { db, isDatabaseConfigured } from "@/db";
 import {
   appSettings,
@@ -13,6 +13,7 @@ import { ensureDefaultSeed } from "@/db/seed";
 import { formatNip } from "./nip-parser";
 import {
   getRetirementMetrics,
+  toIsoDateString,
   type RetirementMetrics,
   type UrgencyLevel,
 } from "./retirement";
@@ -87,24 +88,178 @@ export const DEFAULT_APP_SETTINGS: Omit<AppSettings, "updatedAt"> = {
   upcomingMonths: 24,
 };
 
+const EMPLOYEE_SNAPSHOT_TTL_MS = 30_000;
+
+interface CachedSnapshot {
+  fetchedAt: number;
+  dateKey: string;
+  settings: AppSettings;
+  units: Unit[];
+  enrichedEmployees: EnrichedEmployee[];
+  activeCounts: UrgencyCounts;
+}
+
+const globalForEmployeeCache = globalThis as unknown as {
+  employeeSnapshot: CachedSnapshot | undefined;
+  employeeSnapshotPromise: Promise<CachedSnapshot> | undefined;
+};
+
+export function invalidateEmployeeCache(): void {
+  globalForEmployeeCache.employeeSnapshot = undefined;
+  globalForEmployeeCache.employeeSnapshotPromise = undefined;
+}
+
+async function fetchSnapshotFromDb(): Promise<CachedSnapshot> {
+  const today = new Date();
+  const dateKey = toIsoDateString(today);
+
+  let [settingsRows, unitRows, empRows] = await Promise.all([
+    db.select().from(appSettings).where(eq(appSettings.id, 1)).limit(1),
+    db.select().from(units).orderBy(asc(units.id)),
+    db
+      .select({
+        employee: employees,
+        unit: units,
+      })
+      .from(employees)
+      .innerJoin(units, eq(employees.unitId, units.id)),
+  ]);
+
+  if (settingsRows.length === 0 || unitRows.length === 0) {
+    await ensureDefaultSeed();
+    [settingsRows, unitRows] = await Promise.all([
+      db.select().from(appSettings).where(eq(appSettings.id, 1)).limit(1),
+      db.select().from(units).orderBy(asc(units.id)),
+    ]);
+    if (empRows.length === 0) {
+      empRows = await db
+        .select({
+          employee: employees,
+          unit: units,
+        })
+        .from(employees)
+        .innerJoin(units, eq(employees.unitId, units.id));
+    }
+  }
+
+  const settings = settingsRows[0] ?? {
+    ...DEFAULT_APP_SETTINGS,
+    updatedAt: today,
+  };
+
+  const thresholds = {
+    criticalMonths: settings.criticalMonths,
+    warningMonths: settings.warningMonths,
+    upcomingMonths: settings.upcomingMonths,
+  };
+
+  const activeCounts: UrgencyCounts = {
+    allActive: 0,
+    overdue: 0,
+    critical: 0,
+    warning: 0,
+    upcoming: 0,
+    twoToFive: 0,
+  };
+
+  const enrichedEmployees: EnrichedEmployee[] = empRows.map(
+    ({ employee, unit }) => {
+      const metrics = getRetirementMetrics(
+        employee.birthDate,
+        employee.retirementDate,
+        today,
+        thresholds
+      );
+
+      if (employee.isActive) {
+        activeCounts.allActive += 1;
+        if (metrics.urgency === "OVERDUE") activeCounts.overdue += 1;
+        else if (metrics.urgency === "CRITICAL") activeCounts.critical += 1;
+        else if (metrics.urgency === "WARNING") activeCounts.warning += 1;
+        else if (metrics.urgency === "UPCOMING") activeCounts.upcoming += 1;
+
+        if (
+          metrics.remaining.totalMonths > 24 &&
+          metrics.remaining.totalMonths <= 60
+        ) {
+          activeCounts.twoToFive += 1;
+        }
+      }
+
+      return {
+        id: employee.id,
+        nip: employee.nip,
+        formattedNip: formatNip(employee.nip),
+        fullName: employee.fullName,
+        birthDate: employee.birthDate,
+        gender: employee.gender,
+        rankGrade: employee.rankGrade,
+        positionName: employee.positionName,
+        employmentStatus: employee.employmentStatus,
+        unitId: employee.unitId,
+        unitCode: unit.code,
+        unitName: unit.name,
+        bupAge: employee.bupAge,
+        retirementDate: employee.retirementDate,
+        isActive: employee.isActive,
+        processStatus: employee.processStatus,
+        notes: employee.notes,
+        metrics,
+      };
+    }
+  );
+
+  return {
+    fetchedAt: Date.now(),
+    dateKey,
+    settings,
+    units: unitRows,
+    enrichedEmployees,
+    activeCounts,
+  };
+}
+
+async function loadSnapshot(): Promise<CachedSnapshot> {
+  const now = Date.now();
+  const todayKey = toIsoDateString(new Date());
+  const cached = globalForEmployeeCache.employeeSnapshot;
+
+  if (
+    cached &&
+    cached.dateKey === todayKey &&
+    now - cached.fetchedAt < EMPLOYEE_SNAPSHOT_TTL_MS
+  ) {
+    return cached;
+  }
+
+  if (!globalForEmployeeCache.employeeSnapshotPromise) {
+    globalForEmployeeCache.employeeSnapshotPromise = fetchSnapshotFromDb()
+      .then((snapshot) => {
+        globalForEmployeeCache.employeeSnapshot = snapshot;
+        globalForEmployeeCache.employeeSnapshotPromise = undefined;
+        return snapshot;
+      })
+      .catch((error) => {
+        globalForEmployeeCache.employeeSnapshotPromise = undefined;
+        throw error;
+      });
+  }
+
+  return globalForEmployeeCache.employeeSnapshotPromise;
+}
+
 export async function getAppSettingsOrDefault(): Promise<AppSettings> {
   if (!isDatabaseConfigured()) {
     return { ...DEFAULT_APP_SETTINGS, updatedAt: new Date() };
   }
-  await ensureDefaultSeed();
-  const [row] = await db
-    .select()
-    .from(appSettings)
-    .where(eq(appSettings.id, 1))
-    .limit(1);
-
-  return row ?? { ...DEFAULT_APP_SETTINGS, updatedAt: new Date() };
+  const snapshot = await loadSnapshot();
+  return snapshot.settings;
 }
 
 export async function getAllUnits(): Promise<Unit[]> {
   if (!isDatabaseConfigured()) return [];
-  await ensureDefaultSeed();
-  return db.select().from(units).orderBy(asc(units.id));
+  const snapshot = await loadSnapshot();
+  return snapshot.units;
 }
 
 function matchesUrgencyFilter(
@@ -121,6 +276,14 @@ function matchesUrgencyFilter(
     );
   }
   return metrics.urgency === urgencyFilter;
+}
+
+function compareText(a: string, b: string): number {
+  const la = a.toLowerCase();
+  const lb = b.toLowerCase();
+  if (la < lb) return -1;
+  if (la > lb) return 1;
+  return 0;
 }
 
 export async function queryEmployees(params: EmployeeQueryParams = {}) {
@@ -150,207 +313,109 @@ export async function queryEmployees(params: EmployeeQueryParams = {}) {
     };
   }
 
-  const [settings, unitList] = await Promise.all([
-    getAppSettingsOrDefault(),
-    getAllUnits(),
-  ]);
+  const snapshot = await loadSnapshot();
+  const rawQ = params.q?.trim() ?? "";
+  const lowerQ = rawQ.toLowerCase();
+  const digitsOnly = rawQ.replace(/\D/g, "");
+  const birthYearPrefix = params.birthYear ? `${params.birthYear}-` : null;
+  const tmtYearPrefix = params.tmtYear ? `${params.tmtYear}-` : null;
 
-  const conditions = [];
+  const yearSet = new Set<number>();
+  const birthYearSet = new Set<number>();
+  const rankGradeSet = new Set<string>();
+  const filtered: EnrichedEmployee[] = [];
 
-  if (params.isActive !== "all") {
-    const activeVal = params.isActive ?? true;
-    conditions.push(eq(employees.isActive, activeVal));
-  }
+  for (const item of snapshot.enrichedEmployees) {
+    // Scope pilihan filter (tahun lahir, tahun TMT, golongan) sesuai status aktif/arsip
+    const matchesActiveScope =
+      params.isActive === "all"
+        ? true
+        : params.isActive === false
+          ? !item.isActive
+          : item.isActive;
 
-  if (params.unitId) {
-    conditions.push(eq(employees.unitId, params.unitId));
-  }
+    if (!matchesActiveScope) continue;
 
-  if (params.status && params.status !== "all") {
-    conditions.push(eq(employees.employmentStatus, params.status));
-  }
+    const tmtYr = Number(item.retirementDate.slice(0, 4));
+    if (!Number.isNaN(tmtYr)) yearSet.add(tmtYr);
 
-  if (params.rankGrade && params.rankGrade !== "all") {
-    conditions.push(eq(employees.rankGrade, params.rankGrade));
-  }
+    const birthYr = Number(item.birthDate.slice(0, 4));
+    if (!Number.isNaN(birthYr)) birthYearSet.add(birthYr);
 
-  if (params.birthYear) {
-    conditions.push(
-      and(
-        gte(employees.birthDate, `${params.birthYear}-01-01`),
-        lte(employees.birthDate, `${params.birthYear}-12-31`)
-      )
-    );
-  }
+    const grade = item.rankGrade.trim();
+    if (grade) rankGradeSet.add(grade);
 
-  if (params.processStatus && params.processStatus !== "all") {
-    conditions.push(eq(employees.processStatus, params.processStatus));
-  }
-
-  if (params.tmtYear) {
-    conditions.push(
-      and(
-        gte(employees.retirementDate, `${params.tmtYear}-01-01`),
-        lte(employees.retirementDate, `${params.tmtYear}-12-31`)
-      )
-    );
-  }
-
-  if (params.q && params.q.trim()) {
-    const rawQ = params.q.trim();
-    const digitsOnly = rawQ.replace(/\D/g, "");
-    const textPattern = `%${rawQ}%`;
-    if (digitsOnly.length >= 3) {
-      conditions.push(
-        or(
-          ilike(employees.fullName, textPattern),
-          ilike(employees.positionName, textPattern),
-          ilike(employees.nip, `%${digitsOnly}%`)
-        )
-      );
-    } else {
-      conditions.push(
-        or(
-          ilike(employees.fullName, textPattern),
-          ilike(employees.positionName, textPattern),
-          ilike(employees.nip, textPattern)
-        )
-      );
+    if (params.unitId && item.unitId !== params.unitId) continue;
+    if (
+      params.status &&
+      params.status !== "all" &&
+      item.employmentStatus !== params.status
+    ) {
+      continue;
     }
+    if (
+      params.rankGrade &&
+      params.rankGrade !== "all" &&
+      item.rankGrade !== params.rankGrade
+    ) {
+      continue;
+    }
+    if (birthYearPrefix && !item.birthDate.startsWith(birthYearPrefix)) {
+      continue;
+    }
+    if (
+      params.processStatus &&
+      params.processStatus !== "all" &&
+      item.processStatus !== params.processStatus
+    ) {
+      continue;
+    }
+    if (tmtYearPrefix && !item.retirementDate.startsWith(tmtYearPrefix)) {
+      continue;
+    }
+    if (lowerQ) {
+      const nameMatch = item.fullName.toLowerCase().includes(lowerQ);
+      const posMatch = item.positionName.toLowerCase().includes(lowerQ);
+      const nipTarget = digitsOnly.length >= 3 ? digitsOnly : lowerQ;
+      const nipMatch = item.nip.toLowerCase().includes(nipTarget);
+      if (!nameMatch && !posMatch && !nipMatch) continue;
+    }
+    if (!matchesUrgencyFilter(item.metrics, params.urgency)) continue;
+
+    filtered.push(item);
   }
 
-  const sortDirectionFn = sortDir === "desc" ? desc : asc;
-  const lowerFullNameExpr = sql`LOWER(${employees.fullName})`;
-
-  const orderExprs =
-    sortBy === "fullName"
-      ? [sortDirectionFn(lowerFullNameExpr)]
-      : sortBy === "unitName"
-        ? [
-            sortDirectionFn(units.name),
-            sortDirectionFn(employees.employmentStatus),
-            asc(lowerFullNameExpr),
-          ]
-        : [
-            sortBy === "birthDate"
-              ? sortDirectionFn(employees.birthDate)
-              : sortBy === "rankGrade"
-                ? sortDirectionFn(employees.rankGrade)
-                : sortDirectionFn(employees.retirementDate),
-            asc(lowerFullNameExpr),
-          ];
-
-  const rows = await db
-    .select({
-      employee: employees,
-      unit: units,
-    })
-    .from(employees)
-    .innerJoin(units, eq(employees.unitId, units.id))
-    .where(conditions.length > 0 ? and(...conditions) : undefined)
-    .orderBy(...orderExprs);
-
-  const today = new Date();
-  const thresholds = {
-    criticalMonths: settings.criticalMonths,
-    warningMonths: settings.warningMonths,
-    upcomingMonths: settings.upcomingMonths,
-  };
-
-  const enrichedAll: EnrichedEmployee[] = rows.map(({ employee, unit }) => ({
-    id: employee.id,
-    nip: employee.nip,
-    formattedNip: formatNip(employee.nip),
-    fullName: employee.fullName,
-    birthDate: employee.birthDate,
-    gender: employee.gender,
-    rankGrade: employee.rankGrade,
-    positionName: employee.positionName,
-    employmentStatus: employee.employmentStatus,
-    unitId: employee.unitId,
-    unitCode: unit.code,
-    unitName: unit.name,
-    bupAge: employee.bupAge,
-    retirementDate: employee.retirementDate,
-    isActive: employee.isActive,
-    processStatus: employee.processStatus,
-    notes: employee.notes,
-    metrics: getRetirementMetrics(
-      employee.birthDate,
-      employee.retirementDate,
-      today,
-      thresholds
-    ),
-  }));
-
-  const filtered = enrichedAll.filter((item) =>
-    matchesUrgencyFilter(item.metrics, params.urgency)
-  );
+  const dirMultiplier = sortDir === "desc" ? -1 : 1;
+  filtered.sort((a, b) => {
+    let cmp = 0;
+    if (sortBy === "fullName") {
+      cmp = compareText(a.fullName, b.fullName) * dirMultiplier;
+      if (cmp !== 0) return cmp;
+      return a.id - b.id;
+    }
+    if (sortBy === "unitName") {
+      cmp = compareText(a.unitName, b.unitName) * dirMultiplier;
+      if (cmp !== 0) return cmp;
+      cmp = compareText(a.employmentStatus, b.employmentStatus) * dirMultiplier;
+      if (cmp !== 0) return cmp;
+      return compareText(a.fullName, b.fullName);
+    }
+    if (sortBy === "birthDate") {
+      cmp = compareText(a.birthDate, b.birthDate) * dirMultiplier;
+    } else if (sortBy === "rankGrade") {
+      cmp = compareText(a.rankGrade, b.rankGrade) * dirMultiplier;
+    } else {
+      cmp = compareText(a.retirementDate, b.retirementDate) * dirMultiplier;
+    }
+    if (cmp !== 0) return cmp;
+    return compareText(a.fullName, b.fullName);
+  });
 
   const total = filtered.length;
   const totalPages = Math.max(1, Math.ceil(total / pageSize));
   const safePage = Math.min(page, totalPages);
   const start = (safePage - 1) * pageSize;
   const items = filtered.slice(start, start + pageSize);
-
-  // Hitung counter tab urgensi dari seluruh pegawai aktif + opsi filter sesuai cakupan isActive
-  const metaRows = await db
-    .select({
-      birthDate: employees.birthDate,
-      retirementDate: employees.retirementDate,
-      rankGrade: employees.rankGrade,
-      isActive: employees.isActive,
-    })
-    .from(employees);
-
-  const activeRows = metaRows.filter((r) => r.isActive);
-  const scopeRows =
-    params.isActive === "all"
-      ? metaRows
-      : params.isActive === false
-        ? metaRows.filter((r) => !r.isActive)
-        : activeRows;
-
-  const counts: UrgencyCounts = {
-    allActive: activeRows.length,
-    overdue: 0,
-    critical: 0,
-    warning: 0,
-    upcoming: 0,
-    twoToFive: 0,
-  };
-
-  for (const r of activeRows) {
-    const m = getRetirementMetrics(
-      r.birthDate,
-      r.retirementDate,
-      today,
-      thresholds
-    );
-    if (m.urgency === "OVERDUE") counts.overdue += 1;
-    else if (m.urgency === "CRITICAL") counts.critical += 1;
-    else if (m.urgency === "WARNING") counts.warning += 1;
-    else if (m.urgency === "UPCOMING") counts.upcoming += 1;
-
-    if (m.remaining.totalMonths > 24 && m.remaining.totalMonths <= 60) {
-      counts.twoToFive += 1;
-    }
-  }
-
-  const yearSet = new Set<number>();
-  const birthYearSet = new Set<number>();
-  const rankGradeSet = new Set<string>();
-
-  for (const r of scopeRows) {
-    const tmtYearVal = Number(r.retirementDate.slice(0, 4));
-    if (!Number.isNaN(tmtYearVal)) yearSet.add(tmtYearVal);
-
-    const birthYearVal = Number(r.birthDate.slice(0, 4));
-    if (!Number.isNaN(birthYearVal)) birthYearSet.add(birthYearVal);
-
-    const grade = r.rankGrade.trim();
-    if (grade) rankGradeSet.add(grade);
-  }
 
   const availableYears = Array.from(yearSet).sort((a, b) => a - b);
   const availableBirthYears = Array.from(birthYearSet).sort((a, b) => a - b);
@@ -367,12 +432,12 @@ export async function queryEmployees(params: EmployeeQueryParams = {}) {
       total,
       totalPages: total === 0 ? 0 : totalPages,
     },
-    counts,
+    counts: snapshot.activeCounts,
     availableYears,
     availableBirthYears,
     availableRankGrades,
-    units: unitList,
-    settings,
+    units: snapshot.units,
+    settings: snapshot.settings,
   };
 }
 

@@ -3,7 +3,10 @@ import { and, eq, ne } from "drizzle-orm";
 import { z } from "zod";
 import { db, isDatabaseConfigured } from "@/db";
 import { employees } from "@/db/schema";
-import { getAppSettingsOrDefault } from "@/lib/employee-queries";
+import {
+  getAppSettingsOrDefault,
+  invalidateEmployeeCache,
+} from "@/lib/employee-queries";
 import { parseNip } from "@/lib/nip-parser";
 import { calculateRetirementDate } from "@/lib/retirement";
 
@@ -168,6 +171,8 @@ export async function PATCH(
       .where(eq(employees.id, employeeId))
       .returning();
 
+    invalidateEmployeeCache();
+
     return NextResponse.json({ employee: updated });
   } catch (error) {
     console.error("PATCH /api/employees/[id] error:", error);
@@ -206,6 +211,8 @@ export async function DELETE(
       { status: 404 }
     );
   }
+
+  invalidateEmployeeCache();
 
   return NextResponse.json({ deletedId: deleted.id });
 }

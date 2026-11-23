@@ -19,27 +19,43 @@ export const DEFAULT_UNITS = [
   },
 ] as const;
 
-export async function ensureDefaultSeed() {
-  for (const unit of DEFAULT_UNITS) {
-    await db
-      .insert(units)
-      .values(unit)
-      .onConflictDoNothing({ target: units.code });
+const globalForSeed = globalThis as unknown as {
+  seedPromise: Promise<void> | undefined;
+};
+
+export function resetSeedMemo(): void {
+  globalForSeed.seedPromise = undefined;
+}
+
+export async function ensureDefaultSeed(): Promise<void> {
+  if (!globalForSeed.seedPromise) {
+    globalForSeed.seedPromise = Promise.all([
+      db
+        .insert(units)
+        .values([...DEFAULT_UNITS])
+        .onConflictDoNothing({ target: units.code }),
+      db
+        .insert(appSettings)
+        .values({
+          id: 1,
+          institutionName: "BADAN RISET DAN INOVASI DAERAH",
+          institutionSubname: "PROVINSI SUMATERA SELATAN",
+          defaultBupAge: 60,
+          tmtRule: "FIRST_OF_NEXT_MONTH",
+          criticalMonths: 6,
+          warningMonths: 12,
+          upcomingMonths: 24,
+        })
+        .onConflictDoNothing({ target: appSettings.id }),
+    ])
+      .then(() => undefined)
+      .catch((error) => {
+        globalForSeed.seedPromise = undefined;
+        throw error;
+      });
   }
 
-  await db
-    .insert(appSettings)
-    .values({
-      id: 1,
-      institutionName: "BADAN RISET DAN INOVASI DAERAH",
-      institutionSubname: "PROVINSI SUMATERA SELATAN",
-      defaultBupAge: 60,
-      tmtRule: "FIRST_OF_NEXT_MONTH",
-      criticalMonths: 6,
-      warningMonths: 12,
-      upcomingMonths: 24,
-    })
-    .onConflictDoNothing({ target: appSettings.id });
+  return globalForSeed.seedPromise;
 }
 
 async function main() {
@@ -50,6 +66,7 @@ async function main() {
       // Abaikan jika file .env tidak ada (mis. env sudah disuntikkan dari sistem)
     }
   }
+  resetSeedMemo();
   await ensureDefaultSeed();
   console.log("Seed default units dan app_settings berhasil dijalankan.");
   process.exit(0);

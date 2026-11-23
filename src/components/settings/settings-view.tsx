@@ -15,36 +15,62 @@ import {
   SelectValue,
 } from "@/components/ui/select";
 import type { AppSettings, TmtRule } from "@/db/schema";
+import {
+  fetchCachedJson,
+  getCachedJson,
+  invalidateClientCache,
+} from "@/lib/client-fetch-cache";
 
 interface SettingsApiResponse {
   settings: AppSettings;
   dbConfigured: boolean;
 }
 
+const SETTINGS_API_URL = "/api/settings";
+
 export function SettingsView() {
-  const [loading, setLoading] = useState(true);
+  const [initialCache] = useState<SettingsApiResponse | null>(() =>
+    getCachedJson<SettingsApiResponse>(SETTINGS_API_URL)
+  );
+  const [loading, setLoading] = useState(() => !initialCache);
   const [saving, setSaving] = useState(false);
-  const [dbConfigured, setDbConfigured] = useState(true);
+  const [dbConfigured, setDbConfigured] = useState(
+    () => initialCache?.dbConfigured ?? true
+  );
 
   const [institutionName, setInstitutionName] = useState(
-    "BADAN RISET DAN INOVASI DAERAH"
+    () =>
+      initialCache?.settings?.institutionName ??
+      "BADAN RISET DAN INOVASI DAERAH"
   );
   const [institutionSubname, setInstitutionSubname] = useState(
-    "PROVINSI SUMATERA SELATAN"
+    () =>
+      initialCache?.settings?.institutionSubname ??
+      "PROVINSI SUMATERA SELATAN"
   );
-  const [defaultBupAge, setDefaultBupAge] = useState("60");
-  const [tmtRule, setTmtRule] = useState<TmtRule>("FIRST_OF_NEXT_MONTH");
-  const [initialTmtRule, setInitialTmtRule] =
-    useState<TmtRule>("FIRST_OF_NEXT_MONTH");
-  const [criticalMonths, setCriticalMonths] = useState("6");
-  const [warningMonths, setWarningMonths] = useState("12");
-  const [upcomingMonths, setUpcomingMonths] = useState("24");
+  const [defaultBupAge, setDefaultBupAge] = useState(() =>
+    String(initialCache?.settings?.defaultBupAge ?? 60)
+  );
+  const [tmtRule, setTmtRule] = useState<TmtRule>(
+    () => initialCache?.settings?.tmtRule ?? "FIRST_OF_NEXT_MONTH"
+  );
+  const [initialTmtRule, setInitialTmtRule] = useState<TmtRule>(
+    () => initialCache?.settings?.tmtRule ?? "FIRST_OF_NEXT_MONTH"
+  );
+  const [criticalMonths, setCriticalMonths] = useState(() =>
+    String(initialCache?.settings?.criticalMonths ?? 6)
+  );
+  const [warningMonths, setWarningMonths] = useState(() =>
+    String(initialCache?.settings?.warningMonths ?? 12)
+  );
+  const [upcomingMonths, setUpcomingMonths] = useState(() =>
+    String(initialCache?.settings?.upcomingMonths ?? 24)
+  );
   const [recalculateExistingBup, setRecalculateExistingBup] = useState(false);
 
   useEffect(() => {
     const controller = new AbortController();
-    fetch("/api/settings", { signal: controller.signal })
-      .then((res) => res.json() as Promise<SettingsApiResponse>)
+    fetchCachedJson<SettingsApiResponse>(SETTINGS_API_URL, controller.signal)
       .then((json) => {
         setDbConfigured(json.dbConfigured);
         if (json.settings) {
@@ -100,6 +126,7 @@ export function SettingsView() {
       if (!res.ok) {
         throw new Error(json.error ?? "Gagal menyimpan pengaturan.");
       }
+      invalidateClientCache();
       setInitialTmtRule(tmtRule);
       const msg =
         json.recalculatedCount > 0
