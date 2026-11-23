@@ -46,6 +46,28 @@ export function FilterBar({
   hasActiveFilters,
   onReset,
 }: FilterBarProps) {
+  const unitItems: Record<string, string> = {
+    all: "Semua Unit Kerja",
+    ...Object.fromEntries(units.map((u) => [String(u.id), u.name])),
+  };
+  const statusItems = {
+    all: "Semua Status",
+    PNS: "PNS",
+    PPPK_FULL: "PPPK Penuh Waktu",
+    PPPK_PART: "PPPK Paruh Waktu",
+  };
+  const yearItems: Record<string, string> = {
+    all: "Semua Tahun TMT",
+    ...Object.fromEntries(availableYears.map((yr) => [String(yr), `Tahun ${yr}`])),
+  };
+  const processItems = {
+    all: "Semua Status Berkas",
+    BELUM: "Belum Diproses",
+    BERKAS: "Pengumpulan Berkas",
+    DIAJUKAN: "Diajukan",
+    SELESAI: "Selesai",
+  };
+
   return (
     <div className="rounded-lg border border-slate-200 bg-white p-3">
       <div className="grid grid-cols-1 gap-2.5 md:grid-cols-2 lg:grid-cols-12">
@@ -60,7 +82,11 @@ export function FilterBar({
         </div>
 
         <div className="lg:col-span-2">
-          <Select value={unitId} onValueChange={(v) => onUnitIdChange(v ?? "all")}>
+          <Select
+            value={unitId}
+            onValueChange={(v) => onUnitIdChange(v ?? "all")}
+            items={unitItems}
+          >
             <SelectTrigger className="h-9 w-full text-xs">
               <SelectValue placeholder="Semua Unit" />
             </SelectTrigger>
@@ -76,7 +102,11 @@ export function FilterBar({
         </div>
 
         <div className="lg:col-span-2">
-          <Select value={status} onValueChange={(v) => onStatusChange(v ?? "all")}>
+          <Select
+            value={status}
+            onValueChange={(v) => onStatusChange(v ?? "all")}
+            items={statusItems}
+          >
             <SelectTrigger className="h-9 w-full text-xs">
               <SelectValue placeholder="Semua Status" />
             </SelectTrigger>
@@ -90,7 +120,11 @@ export function FilterBar({
         </div>
 
         <div className="lg:col-span-2">
-          <Select value={tmtYear} onValueChange={(v) => onTmtYearChange(v ?? "all")}>
+          <Select
+            value={tmtYear}
+            onValueChange={(v) => onTmtYearChange(v ?? "all")}
+            items={yearItems}
+          >
             <SelectTrigger className="h-9 w-full text-xs">
               <SelectValue placeholder="Tahun TMT" />
             </SelectTrigger>
@@ -109,6 +143,7 @@ export function FilterBar({
           <Select
             value={processStatus}
             onValueChange={(v) => onProcessStatusChange(v ?? "all")}
+            items={processItems}
           >
             <SelectTrigger className="h-9 w-full text-xs">
               <SelectValue placeholder="Status Berkas" />

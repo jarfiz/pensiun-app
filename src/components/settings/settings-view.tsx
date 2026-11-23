@@ -201,6 +201,11 @@ export function SettingsView() {
                   value={tmtRule}
                   onValueChange={(v) => setTmtRule(v as TmtRule)}
                   disabled={loading}
+                  items={{
+                    FIRST_OF_NEXT_MONTH:
+                      "Tanggal 1 Bulan Berikutnya (Standar BKN)",
+                    EXACT_BIRTHDAY: "Tepat Tanggal Ulang Tahun",
+                  }}
                 >
                   <SelectTrigger className="w-full">
                     <SelectValue />

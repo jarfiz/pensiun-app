@@ -1,4 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
+import { unstable_rethrow } from "next/navigation";
 import { eq } from "drizzle-orm";
 import { z } from "zod";
 import { db, isDatabaseConfigured } from "@/db";
@@ -25,6 +26,7 @@ export async function GET() {
       dbConfigured: isDatabaseConfigured(),
     });
   } catch (error) {
+    unstable_rethrow(error);
     console.error("GET /api/settings error:", error);
     return NextResponse.json(
       { error: "Gagal memuat pengaturan aplikasi." },

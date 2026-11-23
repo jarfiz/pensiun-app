@@ -1,4 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
+import { unstable_rethrow } from "next/navigation";
 import { eq } from "drizzle-orm";
 import { z } from "zod";
 import { db, isDatabaseConfigured } from "@/db";
@@ -72,6 +73,7 @@ export async function GET(request: NextRequest) {
 
     return NextResponse.json(result);
   } catch (error) {
+    unstable_rethrow(error);
     console.error("GET /api/employees error:", error);
     return NextResponse.json(
       { error: "Gagal memuat data pegawai." },

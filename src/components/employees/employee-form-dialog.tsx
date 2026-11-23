@@ -262,6 +262,11 @@ export function EmployeeFormDialog({
                 onValueChange={(v) =>
                   setEmploymentStatus(v as EmploymentStatus)
                 }
+                items={{
+                  PNS: "PNS",
+                  PPPK_FULL: "PPPK Penuh Waktu",
+                  PPPK_PART: "PPPK Paruh Waktu",
+                }}
               >
                 <SelectTrigger className="w-full">
                   <SelectValue />
@@ -290,7 +295,11 @@ export function EmployeeFormDialog({
               <label className="text-xs font-medium text-slate-700">
                 Unit Kerja <span className="text-red-600">*</span>
               </label>
-              <Select value={unitId} onValueChange={(v) => setUnitId(v ?? "")}>
+              <Select
+                value={unitId}
+                onValueChange={(v) => setUnitId(v ?? "")}
+                items={Object.fromEntries(units.map((u) => [String(u.id), u.name]))}
+              >
                 <SelectTrigger className="w-full">
                   <SelectValue placeholder="Pilih Unit" />
                 </SelectTrigger>
@@ -311,6 +320,12 @@ export function EmployeeFormDialog({
               <Select
                 value={String(bupAge)}
                 onValueChange={(v) => setBupAge(Number(v))}
+                items={{
+                  "58": "58 Tahun",
+                  "60": "60 Tahun (Default)",
+                  "65": "65 Tahun",
+                  "70": "70 Tahun",
+                }}
               >
                 <SelectTrigger className="w-full">
                   <SelectValue />

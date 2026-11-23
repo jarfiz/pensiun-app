@@ -1,4 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
+import { unstable_rethrow } from "next/navigation";
 import {
   queryEmployees,
   type EmployeeSortBy,
@@ -65,6 +66,7 @@ export async function GET(request: NextRequest) {
       },
     });
   } catch (error) {
+    unstable_rethrow(error);
     console.error("GET /api/export/excel error:", error);
     return NextResponse.json(
       { error: "Gagal menghasilkan file Excel." },

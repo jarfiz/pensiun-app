@@ -60,6 +60,14 @@ export function ProjectionChart({ employees, units }: ProjectionChartProps) {
     }));
   }, [currentYear, employees, unitFilter]);
 
+  const unitItems = useMemo<Record<string, string>>(
+    () => ({
+      all: "Semua Unit Kerja",
+      ...Object.fromEntries(units.map((u) => [String(u.id), u.name])),
+    }),
+    [units]
+  );
+
   return (
     <Card className="border-slate-200 bg-white">
       <CardHeader className="flex flex-col gap-2 space-y-0 pb-3 sm:flex-row sm:items-center sm:justify-between">
@@ -75,6 +83,7 @@ export function ProjectionChart({ employees, units }: ProjectionChartProps) {
         <Select
           value={unitFilter}
           onValueChange={(v) => setUnitFilter(v ?? "all")}
+          items={unitItems}
         >
           <SelectTrigger className="h-8 w-48 text-xs">
             <SelectValue placeholder="Semua Unit" />

@@ -43,6 +43,13 @@ interface EmployeeDrawerProps {
 
 const BUP_OPTIONS = [58, 60, 65, 70] as const;
 
+const BUP_ITEMS: Record<string, string> = {
+  "58": "58 Tahun (Pelaksana/Administrasi)",
+  "60": "60 Tahun (Default)",
+  "65": "65 Tahun (Peneliti Madya / Fungsional)",
+  "70": "70 Tahun (Peneliti Ahli Utama)",
+};
+
 export function EmployeeDrawer({
   employee,
   tmtRule = "FIRST_OF_NEXT_MONTH",
@@ -247,6 +254,7 @@ export function EmployeeDrawer({
                 onValueChange={(v) =>
                   setProcessStatus(v as RetirementProcessStatus)
                 }
+                items={PROCESS_STATUS_LABELS}
               >
                 <SelectTrigger className="w-full text-sm">
                   <SelectValue />
@@ -272,6 +280,7 @@ export function EmployeeDrawer({
               <Select
                 value={String(bupAge)}
                 onValueChange={(v) => setBupAge(Number(v))}
+                items={BUP_ITEMS}
               >
                 <SelectTrigger className="w-full text-sm">
                   <SelectValue />
@@ -279,14 +288,7 @@ export function EmployeeDrawer({
                 <SelectContent>
                   {BUP_OPTIONS.map((opt) => (
                     <SelectItem key={opt} value={String(opt)}>
-                      {opt} Tahun{" "}
-                      {opt === 60
-                        ? "(Default)"
-                        : opt === 58
-                          ? "(Pelaksana/Administrasi)"
-                          : opt === 65
-                            ? "(Peneliti Madya / Fungsional)"
-                            : "(Peneliti Ahli Utama)"}
+                      {BUP_ITEMS[String(opt)]}
                     </SelectItem>
                   ))}
                 </SelectContent>
